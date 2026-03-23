@@ -344,6 +344,78 @@ with tab1:
             fig.update_layout(xaxis_title="Śr. konwersja %", yaxis_title="")
             st.plotly_chart(fig, use_container_width=True)
 
+    # ── Wykresy konwersji nowych rejestracji → zamówienie ──
+    if len(klienci_sel) > 0:
+        st.divider()
+        st.subheader("Konwersja nowych rejestracji → zamówienie")
+
+        # Dane per rok rejestracji
+        rej_year = klienci_sel.groupby("rok_rej").agg(
+            rejestracje=("id", "count"),
+            z_zamowieniem=("ma_zamowienie", "sum"),
+            powracajacy=("powracajacy", "sum"),
+        ).reset_index()
+        rej_year["z_zamowieniem"] = rej_year["z_zamowieniem"].astype(int)
+        rej_year["powracajacy"] = rej_year["powracajacy"].astype(int)
+        rej_year["bez_zamowienia"] = rej_year["rejestracje"] - rej_year["z_zamowieniem"]
+        rej_year["konwersja_pct"] = (rej_year["z_zamowieniem"] / rej_year["rejestracje"] * 100).round(1)
+        rej_year["pct_powracajacy"] = (rej_year["powracajacy"] / rej_year["z_zamowieniem"].replace(0, 1) * 100).round(1)
+        rej_year["sr_zam"] = rej_year.apply(
+            lambda r: round(klienci_sel[(klienci_sel["rok_rej"] == r["rok_rej"]) & (klienci_sel["ma_zamowienie"])]["zam_cnt"].mean(), 1)
+            if r["z_zamowieniem"] > 0 else 0, axis=1
+        )
+
+        col_a, col_b = st.columns(2)
+
+        with col_a:
+            # Stacked bar: rejestracje z zamówieniem vs bez
+            rej_melt = rej_year[["rok_rej", "z_zamowieniem", "bez_zamowienia"]].melt(
+                id_vars="rok_rej", var_name="typ", value_name="klientow"
+            )
+            rej_melt["typ"] = rej_melt["typ"].map({
+                "z_zamowieniem": "Złożyli zamówienie",
+                "bez_zamowienia": "Bez zamówienia",
+            })
+            fig = px.bar(rej_melt, x="rok_rej", y="klientow", color="typ",
+                         title="Nowe rejestracje — z zamówieniem vs bez",
+                         color_discrete_sequence=[COLORS[2], COLORS[7]],
+                         text="klientow", barmode="stack")
+            fig.update_xaxes(dtick=1)
+            fig.update_layout(xaxis_title="Rok rejestracji", yaxis_title="Klientów", legend_title="")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_b:
+            # Konwersja % rocznie
+            fig = px.line(rej_year, x="rok_rej", y="konwersja_pct",
+                          title="% nowych rejestracji z zamówieniem",
+                          color_discrete_sequence=[COLORS[1]], markers=True, text="konwersja_pct")
+            fig.update_xaxes(dtick=1)
+            fig.update_traces(textposition="top center", texttemplate="%{text:.1f}%")
+            fig.update_layout(xaxis_title="Rok rejestracji", yaxis_title="%")
+            st.plotly_chart(fig, use_container_width=True)
+
+        col_c, col_d = st.columns(2)
+
+        with col_c:
+            # Powracający klienci %
+            fig = px.bar(rej_year, x="rok_rej", y="pct_powracajacy",
+                         title="% kupujących z >1 zamówieniem (powracający)",
+                         color_discrete_sequence=[COLORS[4]], text="pct_powracajacy")
+            fig.update_xaxes(dtick=1)
+            fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig.update_layout(xaxis_title="Rok rejestracji", yaxis_title="%")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_d:
+            # Średnia ilość zamówień na klienta
+            fig = px.bar(rej_year, x="rok_rej", y="sr_zam",
+                         title="Śr. zamówień na klienta (kupujący)",
+                         color_discrete_sequence=[COLORS[3]], text="sr_zam")
+            fig.update_xaxes(dtick=1)
+            fig.update_traces(textposition="outside")
+            fig.update_layout(xaxis_title="Rok rejestracji", yaxis_title="Zamówień")
+            st.plotly_chart(fig, use_container_width=True)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TAB 2 — Eventy i miasta
