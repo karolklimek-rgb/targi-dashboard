@@ -74,6 +74,8 @@ events["rok"] = events["data_dt"].dt.year
 
 klienci["time_utw_dt"] = pd.to_datetime(safe_numeric(klienci["time_utw"]).astype(int), unit="s", errors="coerce")
 klienci["rok_rej"] = klienci["time_utw_dt"].dt.year
+klienci["mies_rej"] = klienci["time_utw_dt"].dt.month
+klienci["rok_mies_rej"] = klienci["time_utw_dt"].dt.to_period("M").astype(str)
 
 bilety["kwota_netto_n"] = safe_numeric(bilety["cena"]) / 100
 bilety["ileosob_n"] = safe_numeric(bilety["ileosob"])
@@ -210,13 +212,15 @@ with tab1:
         pct_powracajacy = round(total_powracajacy / total_z_zam * 100, 1) if total_z_zam > 0 else 0
         sr_zam = round(klienci_sel.loc[klienci_sel["ma_zamowienie"], "zam_cnt"].mean(), 1) if total_z_zam > 0 else 0
 
-        c13, c14, c15, c16 = st.columns(4)
-        c13.metric("Rejestracje → zamówienie", f"{konw_rej}%",
-                   help=f"{total_z_zam} z {total_rej} nowych klientów złożyło zamówienie")
-        c14.metric("Powracający klienci", f"{pct_powracajacy}%",
-                   help=f"{total_powracajacy} klientów złożyło więcej niż 1 zamówienie")
-        c15.metric("Śr. zamówień na klienta", f"{sr_zam}")
-        c16.metric("Klienci z zamówieniem", f"{total_z_zam} / {total_rej}")
+        total_bez_zam = total_rej - total_z_zam
+
+        c13, c14, c15, c16, c17 = st.columns(5)
+        c13.metric("Rejestracje łącznie", f"{total_rej:,}".replace(",", " "))
+        c14.metric("Z zamówieniem", f"{total_z_zam:,}".replace(",", " "),
+                   help=f"{konw_rej}% rejestracji")
+        c15.metric("Bez zamówienia", f"{total_bez_zam:,}".replace(",", " "))
+        c16.metric("Konwersja rej. → zam.", f"{konw_rej}%")
+        c17.metric("Powracający (>1 zam.)", f"{total_powracajacy} ({pct_powracajacy}%)")
 
     st.divider()
 
@@ -415,6 +419,89 @@ with tab1:
             fig.update_traces(textposition="outside")
             fig.update_layout(xaxis_title="Rok rejestracji", yaxis_title="Zamówień")
             st.plotly_chart(fig, use_container_width=True)
+
+        # ── Miesięczne zestawienie rejestracji i zamówień ──
+        st.divider()
+        st.subheader("Miesięczne zestawienie rejestracji i zamówień")
+
+        MIES_NAMES = {1: "Sty", 2: "Lut", 3: "Mar", 4: "Kwi", 5: "Maj", 6: "Cze",
+                      7: "Lip", 8: "Sie", 9: "Wrz", 10: "Paź", 11: "Lis", 12: "Gru"}
+
+        rej_month = klienci_sel.groupby("rok_mies_rej").agg(
+            rejestracje=("id", "count"),
+            z_zamowieniem=("ma_zamowienie", "sum"),
+        ).reset_index()
+        rej_month["z_zamowieniem"] = rej_month["z_zamowieniem"].astype(int)
+        rej_month["bez_zamowienia"] = rej_month["rejestracje"] - rej_month["z_zamowieniem"]
+        rej_month["konwersja_pct"] = (rej_month["z_zamowieniem"] / rej_month["rejestracje"] * 100).round(1)
+        rej_month = rej_month.sort_values("rok_mies_rej")
+
+        # Zamówienia per miesiąc (data utworzenia)
+        zam_active_m = zam_active.copy()
+        zam_active_m["data_utw_dt"] = pd.to_datetime(zam_active_m["data_utw"], errors="coerce")
+        zam_active_m["rok_mies_zam"] = zam_active_m["data_utw_dt"].dt.to_period("M").astype(str)
+        zam_month = zam_active_m.groupby("rok_mies_zam").agg(
+            zamowienia=("id", "count"),
+            przychod=("kwota_netto_n", "sum"),
+        ).reset_index().rename(columns={"rok_mies_zam": "rok_mies"})
+        zam_month = zam_month.sort_values("rok_mies")
+
+        # Wykres 1: Stacked bar rejestracje z/bez zamówienia miesięcznie
+        rej_m_melt = rej_month[["rok_mies_rej", "z_zamowieniem", "bez_zamowienia"]].melt(
+            id_vars="rok_mies_rej", var_name="typ", value_name="klientow"
+        )
+        rej_m_melt["typ"] = rej_m_melt["typ"].map({
+            "z_zamowieniem": "Z zamówieniem",
+            "bez_zamowienia": "Bez zamówienia",
+        })
+        fig = px.bar(rej_m_melt, x="rok_mies_rej", y="klientow", color="typ",
+                     title="Rejestracje miesięcznie — z zamówieniem vs bez",
+                     color_discrete_sequence=[COLORS[2], COLORS[7]],
+                     text="klientow", barmode="stack")
+        fig.update_layout(xaxis_title="Miesiąc", yaxis_title="Klientów", legend_title="",
+                          xaxis_tickangle=-45)
+        st.plotly_chart(fig, use_container_width=True)
+
+        col_m1, col_m2 = st.columns(2)
+
+        with col_m1:
+            # Konwersja % miesięcznie
+            fig = px.line(rej_month, x="rok_mies_rej", y="konwersja_pct",
+                          title="Konwersja rejestracji → zamówienie (miesięcznie)",
+                          color_discrete_sequence=[COLORS[1]], markers=True)
+            fig.update_layout(xaxis_title="Miesiąc", yaxis_title="%", xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_m2:
+            # Zamówienia per miesiąc
+            fig = px.bar(zam_month, x="rok_mies", y="zamowienia",
+                         title="Zamówienia na stoiska miesięcznie",
+                         color_discrete_sequence=[COLORS[0]], text="zamowienia")
+            fig.update_traces(textposition="outside")
+            fig.update_layout(xaxis_title="Miesiąc", yaxis_title="Zamówień", xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Tabela podsumowująca miesięcznie
+        with st.expander("📋 Tabela miesięczna — rejestracje i zamówienia"):
+            rej_table = rej_month.copy()
+            rej_table = rej_table.rename(columns={
+                "rok_mies_rej": "Miesiąc",
+                "rejestracje": "Rejestracje łącznie",
+                "z_zamowieniem": "Z zamówieniem",
+                "bez_zamowienia": "Bez zamówienia",
+                "konwersja_pct": "Konwersja %",
+            })
+            # Merge z zamówieniami
+            rej_table = rej_table.merge(
+                zam_month.rename(columns={"rok_mies": "Miesiąc", "zamowienia": "Zamówień na stoiska",
+                                           "przychod": "Przychód stoiska (netto)"}),
+                on="Miesiąc", how="left"
+            ).fillna(0)
+            rej_table["Przychód stoiska (netto)"] = rej_table["Przychód stoiska (netto)"].apply(
+                lambda x: f"{x:,.0f} zł".replace(",", " ")
+            )
+            rej_table["Zamówień na stoiska"] = rej_table["Zamówień na stoiska"].astype(int)
+            st.dataframe(rej_table, use_container_width=True, hide_index=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
