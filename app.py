@@ -38,6 +38,14 @@ def format_pln(val):
 
 COLORS = px.colors.qualitative.Set2
 
+CITY_COL_MAP = {
+    'Kraków': 't_krakow', 'Warszawa': 't_warszawa', 'Gdańsk': 't_gdansk',
+    'Rzeszów': 't_rzeszow', 'Poznań': 't_poznan', 'Białystok': 't_bialystok',
+    'Gliwice': 't_gliwice', 'Lublin': 't_lublin', 'Katowice': 't_katowice',
+    'Nowy Sącz': 't_nowysacz', 'Słupsk': 't_slupsk', 'Wałbrzych': 't_walbrzych',
+    'Olsztyn': 't_ostroda',
+}
+
 # ── sidebar ──────────────────────────────────────────────────
 
 st.sidebar.title("Targi Młodej Pary")
@@ -157,6 +165,28 @@ with tab1:
     avg_bilet = bil_f["kwota_netto_n"].sum() / total_osoby if total_osoby > 0 else 0
     c10.metric("Śr. cena za bilet", format_pln(avg_bilet))
 
+    # Współczynnik konwersji rejestracji → stoisko
+    conv_rows = []
+    for _, ev in ev_filtered.iterrows():
+        col = CITY_COL_MAP.get(ev["miasto"])
+        if col and col in klienci.columns:
+            registered = int((klienci[col].astype(str).isin(["1", "1.0"])).sum())
+            buyers = zam_active[zam_active["idtargi"].astype(str) == str(ev["id"])]["idklienta"].nunique()
+            conv_rows.append({
+                "symbol": ev["symbol"], "miasto": ev["miasto"], "rok": ev["rok"],
+                "zarejestrowani": registered, "kupili": buyers,
+                "konwersja": round(buyers / registered * 100, 1) if registered > 0 else 0,
+            })
+    conv_df = pd.DataFrame(conv_rows) if conv_rows else pd.DataFrame()
+
+    if not conv_df.empty and len(conv_df) > 0:
+        avg_conv = conv_df["konwersja"].mean()
+        c11, c12 = st.columns(2)
+        c11.metric("Śr. konwersja rejestracji → stoisko", f"{avg_conv:.1f}%")
+        c12.metric("Najwyższa konwersja",
+                   f"{conv_df.loc[conv_df['konwersja'].idxmax(), 'symbol']} — {conv_df['konwersja'].max():.1f}%"
+                   if conv_df["konwersja"].max() > 0 else "—")
+
     st.divider()
 
     col_l, col_r = st.columns(2)
@@ -258,6 +288,30 @@ with tab1:
         fig.update_traces(textposition="top center")
         fig.update_layout(xaxis_title="Rok", yaxis_title="zł / bilet")
         st.plotly_chart(fig, use_container_width=True)
+
+    # Wykres konwersji rejestracji → stoisko per event
+    if not conv_df.empty and conv_df["konwersja"].sum() > 0:
+        col_l5, col_r5 = st.columns(2)
+        with col_l5:
+            conv_sorted = conv_df.sort_values("konwersja", ascending=True)
+            fig = px.bar(conv_sorted, x="konwersja", y="symbol", orientation="h",
+                         color="miasto", title="Konwersja rejestracji → stoisko per event",
+                         color_discrete_sequence=COLORS, text="konwersja")
+            fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig.update_layout(xaxis_title="Konwersja %", yaxis_title="", showlegend=True)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_r5:
+            conv_city = conv_df.groupby("miasto").agg(
+                sr_konwersja=("konwersja", "mean"),
+                eventow=("symbol", "count"),
+            ).reset_index().sort_values("sr_konwersja", ascending=True)
+            fig = px.bar(conv_city, x="sr_konwersja", y="miasto", orientation="h",
+                         title="Śr. konwersja per miasto",
+                         color_discrete_sequence=[COLORS[2]], text="sr_konwersja")
+            fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+            fig.update_layout(xaxis_title="Śr. konwersja %", yaxis_title="")
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
