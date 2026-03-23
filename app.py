@@ -187,6 +187,37 @@ with tab1:
                    f"{conv_df.loc[conv_df['konwersja'].idxmax(), 'symbol']} — {conv_df['konwersja'].max():.1f}%"
                    if conv_df["konwersja"].max() > 0 else "—")
 
+    # Konwersja nowych rejestracji → zamówienie
+    klienci_sel = klienci_f[klienci_f["time_utw_dt"].notna()].copy()
+    if len(klienci_sel) > 0:
+        # Klienci z zamówieniami (status 2, bez wewnętrznych)
+        # Zamówienia z ok_email != targi@ są już odfiltrowane w SQL (db.py)
+        zam_ok = zamowienia[zamowienia["status"] == "2"]
+        klienci_z_zam = set(zam_ok["idklienta"].astype(str).unique())
+        klienci_sel["ma_zamowienie"] = klienci_sel["id"].astype(str).isin(klienci_z_zam)
+
+        # Ile zamówień per klient
+        zam_per_klient = zam_ok.groupby(zam_ok["idklienta"].astype(str)).size().reset_index(name="zam_cnt")
+        klienci_sel = klienci_sel.merge(zam_per_klient, left_on=klienci_sel["id"].astype(str),
+                                         right_on="idklienta", how="left")
+        klienci_sel["zam_cnt"] = klienci_sel["zam_cnt"].fillna(0).astype(int)
+        klienci_sel["powracajacy"] = klienci_sel["zam_cnt"] > 1
+
+        total_rej = len(klienci_sel)
+        total_z_zam = int(klienci_sel["ma_zamowienie"].sum())
+        total_powracajacy = int(klienci_sel["powracajacy"].sum())
+        konw_rej = round(total_z_zam / total_rej * 100, 1) if total_rej > 0 else 0
+        pct_powracajacy = round(total_powracajacy / total_z_zam * 100, 1) if total_z_zam > 0 else 0
+        sr_zam = round(klienci_sel.loc[klienci_sel["ma_zamowienie"], "zam_cnt"].mean(), 1) if total_z_zam > 0 else 0
+
+        c13, c14, c15, c16 = st.columns(4)
+        c13.metric("Rejestracje → zamówienie", f"{konw_rej}%",
+                   help=f"{total_z_zam} z {total_rej} nowych klientów złożyło zamówienie")
+        c14.metric("Powracający klienci", f"{pct_powracajacy}%",
+                   help=f"{total_powracajacy} klientów złożyło więcej niż 1 zamówienie")
+        c15.metric("Śr. zamówień na klienta", f"{sr_zam}")
+        c16.metric("Klienci z zamówieniem", f"{total_z_zam} / {total_rej}")
+
     st.divider()
 
     col_l, col_r = st.columns(2)
