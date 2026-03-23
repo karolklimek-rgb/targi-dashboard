@@ -7,7 +7,7 @@ import numpy as np
 from scipy import stats
 
 st.set_page_config(
-    page_title="Targi Ślubne — Dashboard",
+    page_title="Targi Młodej Pary — Dashboard",
     page_icon="💍",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -40,7 +40,7 @@ COLORS = px.colors.qualitative.Set2
 
 # ── sidebar ──────────────────────────────────────────────────
 
-st.sidebar.title("Targi Ślubne")
+st.sidebar.title("Targi Młodej Pary")
 st.sidebar.caption("Dashboard analityczny")
 
 if st.sidebar.button("Odśwież dane"):
@@ -92,7 +92,8 @@ platnosci["status_nazwa"] = platnosci["status"].astype(str).map(STATUS_PLAT).fil
 
 # Sidebar filters
 all_years = sorted(events["rok"].dropna().unique().astype(int))
-selected_years = st.sidebar.multiselect("Rok", all_years, default=all_years[-3:] if len(all_years) >= 3 else all_years)
+default_years = [y for y in all_years if y >= 2022]
+selected_years = st.sidebar.multiselect("Rok", all_years, default=default_years)
 
 all_cities = sorted(events["miasto"].dropna().unique())
 selected_cities = st.sidebar.multiselect("Miasto", all_cities, default=[])
