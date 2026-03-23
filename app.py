@@ -455,12 +455,44 @@ with tab1:
             "bez_zamowienia": "Bez zamówienia",
         })
         fig = px.bar(rej_m_melt, x="rok_mies_rej", y="klientow", color="typ",
-                     title="Rejestracje miesięcznie — z zamówieniem vs bez",
+                     title="Rejestracje miesięcznie — z zamówieniem vs bez (łącznie na szczycie)",
                      color_discrete_sequence=[COLORS[2], COLORS[7]],
                      text="klientow", barmode="stack")
+        # Dodaj łączną sumę jako anotację na szczycie każdego słupka
+        for _, row in rej_month.iterrows():
+            fig.add_annotation(
+                x=row["rok_mies_rej"], y=row["rejestracje"],
+                text=f"<b>{row['rejestracje']}</b>",
+                showarrow=False, yshift=12,
+                font=dict(size=12, color="black"),
+            )
         fig.update_layout(xaxis_title="Miesiąc", yaxis_title="Klientów", legend_title="",
                           xaxis_tickangle=-45)
         st.plotly_chart(fig, use_container_width=True)
+
+        # Osobny wykres: łączne rejestracje miesięcznie (linia trendu)
+        col_rej_total1, col_rej_total2 = st.columns(2)
+        with col_rej_total1:
+            fig = px.bar(rej_month, x="rok_mies_rej", y="rejestracje",
+                         title="Łączne nowe rejestracje miesięcznie",
+                         color_discrete_sequence=[COLORS[5]], text="rejestracje")
+            fig.update_traces(textposition="outside")
+            fig.update_layout(xaxis_title="Miesiąc", yaxis_title="Rejestracji", xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_rej_total2:
+            # Rejestracje tygodniowo
+            klienci_sel["rok_tydz_rej"] = klienci_sel["time_utw_dt"].dt.to_period("W").apply(
+                lambda p: str(p.start_time.date())
+            )
+            rej_week = klienci_sel.groupby("rok_tydz_rej").agg(
+                rejestracje=("id", "count"),
+            ).reset_index().sort_values("rok_tydz_rej")
+            fig = px.line(rej_week, x="rok_tydz_rej", y="rejestracje",
+                          title="Nowe rejestracje tygodniowo",
+                          color_discrete_sequence=[COLORS[3]], markers=False)
+            fig.update_layout(xaxis_title="Tydzień (od)", yaxis_title="Rejestracji", xaxis_tickangle=-45)
+            st.plotly_chart(fig, use_container_width=True)
 
         col_m1, col_m2 = st.columns(2)
 
