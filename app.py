@@ -130,14 +130,14 @@ bil_wejscia = bil_f[bil_f["ts_wejscie"].notna() & (bil_f["ts_wejscie"] != "")]
 
 # ── TABS ─────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab8, tab7 = st.tabs([
+tab8, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Targi jesień 2026",
     "Przegląd ogólny",
     "Eventy i miasta",
     "Bilety",
     "Wystawcy i zamówienia",
     "Przychody i płatności",
     "Leady i rabaty",
-    "Targi jesienne",
     "Analizy i wnioski",
 ])
 
@@ -986,6 +986,247 @@ with tab8:
         kj5.metric("Dni do pierwszego eventu",
                     max(0, (pd.to_datetime(jes_2026["data"].min()) - pd.Timestamp.now()).days))
 
+        # ── PROGNOZA SPRZEDAŻY ──────────────────────────────────────
+        st.divider()
+        st.subheader("Prognoza sprzedaży — jesień 2026")
+        st.caption("Na podstawie historycznego rozkładu zamówień wg miesięcy przed eventem")
+
+        # Oblicz historyczny wzorzec sprzedaży per miasto
+        zam_jes_timing = zam_jes.copy()
+        zam_jes_timing["data_utw_dt"] = pd.to_datetime(zam_jes_timing["data_utw"], errors="coerce")
+        if "miasto" in zam_jes_timing.columns:
+            zam_jes_timing = zam_jes_timing.drop(columns=["miasto"])
+        zam_jes_timing = zam_jes_timing.merge(
+            ev_jesien[["id", "data_dt", "miasto", "rok_n"]].rename(columns={"id": "ev_id", "data_dt": "data_eventu"}),
+            left_on="idtargi_n", right_on="ev_id", how="left"
+        )
+        zam_jes_timing["dni_przed"] = (zam_jes_timing["data_eventu"] - zam_jes_timing["data_utw_dt"]).dt.days
+        zam_jes_timing["mies_przed"] = (zam_jes_timing["dni_przed"] / 30.44).round(0).astype(int)
+
+        hist_timing = zam_jes_timing[zam_jes_timing["rok_n"] < 2026]
+        cur_timing = zam_jes_timing[zam_jes_timing["rok_n"] == 2026]
+
+        prognoza_rows = []
+        for _, ev26 in jes_2026.iterrows():
+            miasto = ev26["miasto"]
+            ev_data = pd.to_datetime(ev26["data"])
+            ev_id = int(ev26["ev_id"])
+
+            h = hist_timing[hist_timing["miasto"] == miasto]
+            if len(h) == 0:
+                continue
+
+            h_total_per_ev = h.groupby("ev_id")["id"].count().mean()
+            h_dist = h.groupby("mies_przed")["id"].count()
+            h_dist_pct = (h_dist / h_dist.sum()).to_dict()
+
+            hist_same = jes_hist[jes_hist["miasto"] == miasto]
+            last_year = hist_same[hist_same["rok"] == hist_same["rok"].max()]
+            last_year_zam = last_year["zamowien"].sum() if len(last_year) > 0 else h_total_per_ev
+
+            cel_100pct = int(last_year_zam * 2)
+
+            cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
+            aktualnie = len(cur_ev)
+
+            dni_do = (ev_data - pd.Timestamp.now()).days
+            mies_do = max(0, round(dni_do / 30.44))
+
+            pct_pozostale = sum(v for k, v in h_dist_pct.items() if k <= mies_do)
+            pct_juz = 1 - pct_pozostale
+            if pct_juz > 0:
+                prognoza_total = round(aktualnie / pct_juz)
+            else:
+                prognoza_total = round(h_total_per_ev)
+
+            prognoza_rows.append({
+                "Event": ev26["symbol"],
+                "Miasto": miasto,
+                "Data eventu": ev_data.strftime("%Y-%m-%d"),
+                "Dni do eventu": dni_do,
+                "Zeszły rok": int(last_year_zam),
+                "Cel (2x)": cel_100pct,
+                "Aktualnie": aktualnie,
+                "% hist. wzorca": round(pct_juz * 100, 1),
+                "Prognoza końcowa": prognoza_total,
+                "Brakuje do celu": max(0, cel_100pct - aktualnie),
+                "Prognoza vs cel": round(prognoza_total / cel_100pct * 100, 1) if cel_100pct > 0 else 0,
+            })
+
+        if prognoza_rows:
+            prog_df = pd.DataFrame(prognoza_rows)
+
+            st.dataframe(
+                prog_df.style.format({
+                    "% hist. wzorca": "{:.1f}%",
+                    "Prognoza vs cel": "{:.1f}%",
+                }).apply(lambda x: [
+                    "background-color: #d4edda" if v >= 80 else
+                    "background-color: #fff3cd" if v >= 50 else
+                    "background-color: #f8d7da"
+                    for v in x
+                ] if x.name == "Prognoza vs cel" else [""] * len(x), axis=0),
+                use_container_width=True, hide_index=True,
+            )
+
+            with st.expander("Jak czytać tę tabelę?"):
+                st.markdown("""
+**Kolumny:**
+- **Zeszły rok** — ile zamówień miał ten event w ostatniej edycji jesiennej
+- **Cel (2x)** — cel sprzedażowy = dwukrotność zeszłego roku
+- **Aktualnie** — ile zamówień już wpłynęło na ten event
+- **% hist. wzorca** — jaki % wszystkich zamówień historycznie wpływał do tego momentu (tyle miesięcy przed eventem). Jeśli 0% — znaczy, że historycznie w tym okresie jeszcze żadne zamówienia nie wpływały
+- **Prognoza końcowa** — przewidywana liczba zamówień na koniec sprzedaży, obliczona na podstawie aktualnego tempa i historycznego wzorca
+- **Brakuje do celu** — ile zamówień trzeba jeszcze pozyskać, żeby osiągnąć cel 2x
+- **Prognoza vs cel** — czy prognoza osiągnie cel? >100% = przekroczymy cel, <100% = nie dojdziemy
+
+**Kolory w kolumnie "Prognoza vs cel":**
+- :green[Zielony] (>=80%) — na dobrej drodze do osiągnięcia celu
+- :orange[Żółty] (50-79%) — wymaga uwagi, sprzedaż poniżej oczekiwań
+- :red[Czerwony] (<50%) — alarm, znacząco poniżej celu
+
+**Uwaga:** Prognoza jest najbardziej wiarygodna gdy **% hist. wzorca > 30%**. Przy niskim % (np. 0-10%) prognoza opiera się na bardzo małej próbce i może być niedokładna.
+""")
+
+            st.subheader("Aktualny stan vs cel (2x zeszły rok)")
+            prog_chart = prog_df[["Event", "Aktualnie", "Cel (2x)", "Prognoza końcowa"]].melt(
+                id_vars="Event", var_name="Typ", value_name="Zamówień"
+            )
+            fig = px.bar(prog_chart, x="Event", y="Zamówień", color="Typ",
+                         barmode="group",
+                         color_discrete_map={
+                             "Aktualnie": COLORS[2],
+                             "Cel (2x)": COLORS[1],
+                             "Prognoza końcowa": COLORS[4],
+                         },
+                         text="Zamówień")
+            fig.update_traces(textposition="outside", textfont_size=10)
+            fig.update_layout(legend_title="", xaxis_title="")
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("Kiedy wpływają zamówienia? (historyczny wzorzec)")
+            with st.expander("Jak czytać te wykresy?"):
+                st.markdown("""
+**Lewy wykres — % zamówień per miesiąc przed eventem:**
+Pokazuje w którym momencie przed targami historycznie wpływały zamówienia na stoiska.
+Np. "2 mies. przed = 21.7%" oznacza, że co piąte zamówienie wpływa na 2 miesiące przed wydarzeniem.
+
+**Prawy wykres — skumulowany % zamówień:**
+Pokazuje ile % wszystkich zamówień jest już złożonych na X miesięcy przed eventem.
+Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopiero ~62% zamówień — reszta wpłynie w ostatnich 3 miesiącach.
+
+**Kluczowe wnioski:**
+- Sprzedaż startuje ~7 mies. przed eventem (pierwsza fala ~15% zamówień)
+- Pik sprzedaży to 1-2 miesiące przed eventem (~40% zamówień)
+- Na miesiąc przed targami brakuje jeszcze ~15-20% zamówień
+- Zamówienia wpływają nawet w miesiącu eventu (~8%)
+
+**Jak to wykorzystać:** Jeśli na 3 mies. przed eventem masz mniej niż 62% celu — czas zintensyfikować działania sprzedażowe. Jeśli masz więcej — jesteś powyżej normy.
+""")
+            hist_dist_all = hist_timing.groupby("mies_przed")["id"].count().reset_index(name="zamowien")
+            hist_dist_all["pct"] = (hist_dist_all["zamowien"] / hist_dist_all["zamowien"].sum() * 100).round(1)
+            hist_dist_all["pct_kum"] = hist_dist_all["pct"].cumsum().round(1)
+            hist_dist_all = hist_dist_all.sort_values("mies_przed", ascending=False)
+            hist_dist_all["label"] = hist_dist_all["mies_przed"].apply(
+                lambda x: f"{x} mies. przed" if x >= 0 else f"{abs(x)} mies. po"
+            )
+
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                fig = px.bar(hist_dist_all, x="label", y="pct",
+                             title="% zamówień per miesiąc przed eventem",
+                             color_discrete_sequence=[COLORS[0]], text="pct")
+                fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+                fig.update_layout(xaxis_title="", yaxis_title="% zamówień")
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_p2:
+                hist_dist_kum = hist_dist_all.sort_values("mies_przed", ascending=True)
+                fig = px.line(hist_dist_kum, x="label", y="pct_kum",
+                              title="Skumulowany % zamówień (od najwcześniejszych)",
+                              color_discrete_sequence=[COLORS[2]], markers=True, text="pct_kum")
+                fig.update_traces(texttemplate="%{text:.1f}%", textposition="top center")
+                fig.update_layout(xaxis_title="", yaxis_title="% skumulowany")
+                st.plotly_chart(fig, use_container_width=True)
+
+            st.subheader("Plan sprzedaży miesięczny per event")
+            for _, ev26 in jes_2026.iterrows():
+                miasto = ev26["miasto"]
+                ev_data = pd.to_datetime(ev26["data"])
+                ev_id = int(ev26["ev_id"])
+
+                h = hist_timing[hist_timing["miasto"] == miasto]
+                if len(h) == 0:
+                    continue
+
+                prog_row = prog_df[prog_df["Event"] == ev26["symbol"]].iloc[0]
+                cel = prog_row["Cel (2x)"]
+
+                h_dist = h.groupby("mies_przed")["id"].count()
+                h_dist_pct = (h_dist / h_dist.sum())
+
+                cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
+                cur_per_mies = cur_ev.groupby("mies_przed")["id"].count().to_dict()
+                aktualnie_total = len(cur_ev)
+
+                plan_rows = []
+                for mp in sorted(h_dist_pct.index, reverse=True):
+                    mies_data = ev_data - pd.DateOffset(months=mp)
+                    plan_zam = round(cel * h_dist_pct.get(mp, 0))
+                    realizacja = cur_per_mies.get(mp, 0)
+                    plan_rows.append({
+                        "Miesiąc": mies_data.strftime("%Y-%m"),
+                        "Mies. przed": mp,
+                        "% hist.": round(h_dist_pct.get(mp, 0) * 100, 1),
+                        "Plan zamówień": plan_zam,
+                        "Realizacja": int(realizacja),
+                    })
+
+                plan_df = pd.DataFrame(plan_rows)
+                plan_df["Plan kumulat."] = plan_df["Plan zamówień"].cumsum()
+                plan_df["Realiz. kumulat."] = plan_df["Realizacja"].cumsum()
+                plan_df["% realizacji"] = (plan_df["Realiz. kumulat."] / plan_df["Plan kumulat."].replace(0, 1) * 100).round(0)
+
+                with st.expander(f"{ev26['symbol']} — {miasto} ({ev_data.strftime('%Y-%m-%d')}) | Cel: {cel} zamówień | Aktualnie: {aktualnie_total}"):
+                    col_plan1, col_plan2 = st.columns([1, 2])
+                    with col_plan1:
+                        st.dataframe(plan_df.style.format({
+                            "% hist.": "{:.1f}%",
+                            "% realizacji": "{:.0f}%",
+                        }), hide_index=True, use_container_width=True)
+                    with col_plan2:
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=plan_df["Miesiąc"], y=plan_df["Plan zamówień"],
+                            name="Plan miesięczny", marker_color=COLORS[0],
+                            text=plan_df["Plan zamówień"], textposition="outside",
+                            opacity=0.5,
+                        ))
+                        fig.add_trace(go.Bar(
+                            x=plan_df["Miesiąc"], y=plan_df["Realizacja"],
+                            name="Realizacja", marker_color=COLORS[2],
+                            text=plan_df["Realizacja"], textposition="outside",
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=plan_df["Miesiąc"], y=plan_df["Plan kumulat."],
+                            name="Plan kumulat.", mode="lines+markers",
+                            line=dict(color=COLORS[0], width=2, dash="dash"),
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=plan_df["Miesiąc"], y=plan_df["Realiz. kumulat."],
+                            name="Realizacja kumulat.", mode="lines+markers+text",
+                            line=dict(color=COLORS[2], width=2),
+                            text=plan_df["Realiz. kumulat."], textposition="top center",
+                        ))
+                        fig.add_hline(y=cel, line_dash="dash", line_color="red",
+                                      annotation_text=f"Cel: {cel}")
+                        fig.update_layout(
+                            title=f"Plan sprzedaży — {ev26['symbol']}",
+                            xaxis_title="", yaxis_title="Zamówienia",
+                            legend=dict(orientation="h", y=-0.2),
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
         st.divider()
 
         # Tabela per event 2026 z porównaniem do historii
@@ -1217,269 +1458,6 @@ with tab8:
             fig.update_xaxes(dtick=1)
             fig.update_layout(xaxis_title="Rok", yaxis_title="Zamówień")
             st.plotly_chart(fig, use_container_width=True)
-
-        # ── PROGNOZA SPRZEDAŻY ──────────────────────────────────────
-        st.divider()
-        st.subheader("Prognoza sprzedaży — jesień 2026")
-        st.caption("Na podstawie historycznego rozkładu zamówień wg miesięcy przed eventem")
-
-        # Oblicz historyczny wzorzec sprzedaży per miasto
-        # Ile % zamówień wpada w danym miesiącu przed eventem
-        zam_jes_timing = zam_jes.copy()
-        zam_jes_timing["data_utw_dt"] = pd.to_datetime(zam_jes_timing["data_utw"], errors="coerce")
-        # Drop miasto z zamówień (pochodzi z db.py JOIN) żeby uniknąć duplikatu
-        if "miasto" in zam_jes_timing.columns:
-            zam_jes_timing = zam_jes_timing.drop(columns=["miasto"])
-        zam_jes_timing = zam_jes_timing.merge(
-            ev_jesien[["id", "data_dt", "miasto", "rok_n"]].rename(columns={"id": "ev_id", "data_dt": "data_eventu"}),
-            left_on="idtargi_n", right_on="ev_id", how="left"
-        )
-        zam_jes_timing["dni_przed"] = (zam_jes_timing["data_eventu"] - zam_jes_timing["data_utw_dt"]).dt.days
-        zam_jes_timing["mies_przed"] = (zam_jes_timing["dni_przed"] / 30.44).round(0).astype(int)
-
-        # Historyczne wzorce (tylko lata < 2026)
-        hist_timing = zam_jes_timing[zam_jes_timing["rok_n"] < 2026]
-        # Aktualne 2026
-        cur_timing = zam_jes_timing[zam_jes_timing["rok_n"] == 2026]
-
-        # Per miasto: rozkład % zamówień per miesiąc przed eventem
-        prognoza_rows = []
-        for _, ev26 in jes_2026.iterrows():
-            miasto = ev26["miasto"]
-            ev_data = pd.to_datetime(ev26["data"])
-            ev_id = int(ev26["ev_id"])
-
-            # Historia tego miasta
-            h = hist_timing[hist_timing["miasto"] == miasto]
-            if len(h) == 0:
-                continue
-
-            # Rozkład historyczny
-            h_total_per_ev = h.groupby("ev_id")["id"].count().mean()  # śr. zamówień per event
-            h_dist = h.groupby("mies_przed")["id"].count()
-            h_dist_pct = (h_dist / h_dist.sum()).to_dict()
-
-            # Zeszły rok — ten sam event
-            hist_same = jes_hist[jes_hist["miasto"] == miasto]
-            last_year = hist_same[hist_same["rok"] == hist_same["rok"].max()]
-            last_year_zam = last_year["zamowien"].sum() if len(last_year) > 0 else h_total_per_ev
-
-            # Cel 100% wzrostu
-            cel_100pct = int(last_year_zam * 2)
-
-            # Aktualne zamówienia 2026
-            cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
-            aktualnie = len(cur_ev)
-
-            # Ile miesięcy do eventu
-            dni_do = (ev_data - pd.Timestamp.now()).days
-            mies_do = max(0, round(dni_do / 30.44))
-
-            # Prognoza: ile jeszcze wpłynie na podstawie historycznego wzorca
-            # % zamówień które historycznie wpływały w pozostałych miesiącach
-            pct_pozostale = sum(v for k, v in h_dist_pct.items() if k <= mies_do)
-            pct_juz = 1 - pct_pozostale
-            if pct_juz > 0:
-                prognoza_total = round(aktualnie / pct_juz)
-            else:
-                prognoza_total = round(h_total_per_ev)
-
-            prognoza_rows.append({
-                "Event": ev26["symbol"],
-                "Miasto": miasto,
-                "Data eventu": ev_data.strftime("%Y-%m-%d"),
-                "Dni do eventu": dni_do,
-                "Zeszły rok": int(last_year_zam),
-                "Cel (2x)": cel_100pct,
-                "Aktualnie": aktualnie,
-                "% hist. wzorca": round(pct_juz * 100, 1),
-                "Prognoza końcowa": prognoza_total,
-                "Brakuje do celu": max(0, cel_100pct - aktualnie),
-                "Prognoza vs cel": round(prognoza_total / cel_100pct * 100, 1) if cel_100pct > 0 else 0,
-            })
-
-        if prognoza_rows:
-            prog_df = pd.DataFrame(prognoza_rows)
-
-            # Tabela prognoz
-            st.dataframe(
-                prog_df.style.format({
-                    "% hist. wzorca": "{:.1f}%",
-                    "Prognoza vs cel": "{:.1f}%",
-                }).apply(lambda x: [
-                    "background-color: #d4edda" if v >= 80 else
-                    "background-color: #fff3cd" if v >= 50 else
-                    "background-color: #f8d7da"
-                    for v in x
-                ] if x.name == "Prognoza vs cel" else [""] * len(x), axis=0),
-                use_container_width=True, hide_index=True,
-            )
-
-            # Instrukcja odczytywania tabeli
-            with st.expander("Jak czytać tę tabelę?"):
-                st.markdown("""
-**Kolumny:**
-- **Zeszły rok** — ile zamówień miał ten event w ostatniej edycji jesiennej
-- **Cel (2x)** — cel sprzedażowy = dwukrotność zeszłego roku
-- **Aktualnie** — ile zamówień już wpłynęło na ten event
-- **% hist. wzorca** — jaki % wszystkich zamówień historycznie wpływał do tego momentu (tyle miesięcy przed eventem). Jeśli 0% — znaczy, że historycznie w tym okresie jeszcze żadne zamówienia nie wpływały
-- **Prognoza końcowa** — przewidywana liczba zamówień na koniec sprzedaży, obliczona na podstawie aktualnego tempa i historycznego wzorca
-- **Brakuje do celu** — ile zamówień trzeba jeszcze pozyskać, żeby osiągnąć cel 2x
-- **Prognoza vs cel** — czy prognoza osiągnie cel? >100% = przekroczymy cel, <100% = nie dojdziemy
-
-**Kolory w kolumnie "Prognoza vs cel":**
-- :green[Zielony] (>=80%) — na dobrej drodze do osiągnięcia celu
-- :orange[Żółty] (50-79%) — wymaga uwagi, sprzedaż poniżej oczekiwań
-- :red[Czerwony] (<50%) — alarm, znacząco poniżej celu
-
-**Uwaga:** Prognoza jest najbardziej wiarygodna gdy **% hist. wzorca > 30%**. Przy niskim % (np. 0-10%) prognoza opiera się na bardzo małej próbce i może być niedokładna.
-""")
-
-            # Wykres: aktualnie vs cel vs prognoza
-            st.subheader("Aktualny stan vs cel (2x zeszły rok)")
-            prog_chart = prog_df[["Event", "Aktualnie", "Cel (2x)", "Prognoza końcowa"]].melt(
-                id_vars="Event", var_name="Typ", value_name="Zamówień"
-            )
-            fig = px.bar(prog_chart, x="Event", y="Zamówień", color="Typ",
-                         barmode="group",
-                         color_discrete_map={
-                             "Aktualnie": COLORS[2],
-                             "Cel (2x)": COLORS[1],
-                             "Prognoza końcowa": COLORS[4],
-                         },
-                         text="Zamówień")
-            fig.update_traces(textposition="outside", textfont_size=10)
-            fig.update_layout(legend_title="", xaxis_title="")
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Wykres: historyczny rozkład zamówień wg miesięcy przed eventem
-            st.subheader("Kiedy wpływają zamówienia? (historyczny wzorzec)")
-            with st.expander("Jak czytać te wykresy?"):
-                st.markdown("""
-**Lewy wykres — % zamówień per miesiąc przed eventem:**
-Pokazuje w którym momencie przed targami historycznie wpływały zamówienia na stoiska.
-Np. "2 mies. przed = 21.7%" oznacza, że co piąte zamówienie wpływa na 2 miesiące przed wydarzeniem.
-
-**Prawy wykres — skumulowany % zamówień:**
-Pokazuje ile % wszystkich zamówień jest już złożonych na X miesięcy przed eventem.
-Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopiero ~62% zamówień — reszta wpłynie w ostatnich 3 miesiącach.
-
-**Kluczowe wnioski:**
-- Sprzedaż startuje ~7 mies. przed eventem (pierwsza fala ~15% zamówień)
-- Pik sprzedaży to 1-2 miesiące przed eventem (~40% zamówień)
-- Na miesiąc przed targami brakuje jeszcze ~15-20% zamówień
-- Zamówienia wpływają nawet w miesiącu eventu (~8%)
-
-**Jak to wykorzystać:** Jeśli na 3 mies. przed eventem masz mniej niż 62% celu — czas zintensyfikować działania sprzedażowe. Jeśli masz więcej — jesteś powyżej normy.
-""")
-            hist_dist_all = hist_timing.groupby("mies_przed")["id"].count().reset_index(name="zamowien")
-            hist_dist_all["pct"] = (hist_dist_all["zamowien"] / hist_dist_all["zamowien"].sum() * 100).round(1)
-            hist_dist_all["pct_kum"] = hist_dist_all["pct"].cumsum().round(1)
-            hist_dist_all = hist_dist_all.sort_values("mies_przed", ascending=False)
-            hist_dist_all["label"] = hist_dist_all["mies_przed"].apply(
-                lambda x: f"{x} mies. przed" if x >= 0 else f"{abs(x)} mies. po"
-            )
-
-            col_p1, col_p2 = st.columns(2)
-            with col_p1:
-                fig = px.bar(hist_dist_all, x="label", y="pct",
-                             title="% zamówień per miesiąc przed eventem",
-                             color_discrete_sequence=[COLORS[0]], text="pct")
-                fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-                fig.update_layout(xaxis_title="", yaxis_title="% zamówień")
-                st.plotly_chart(fig, use_container_width=True)
-
-            with col_p2:
-                hist_dist_kum = hist_dist_all.sort_values("mies_przed", ascending=True)
-                fig = px.line(hist_dist_kum, x="label", y="pct_kum",
-                              title="Skumulowany % zamówień (od najwcześniejszych)",
-                              color_discrete_sequence=[COLORS[2]], markers=True, text="pct_kum")
-                fig.update_traces(texttemplate="%{text:.1f}%", textposition="top center")
-                fig.update_layout(xaxis_title="", yaxis_title="% skumulowany")
-                st.plotly_chart(fig, use_container_width=True)
-
-            # Per miasto — plan miesięczny
-            st.subheader("Plan sprzedaży miesięczny per event")
-            for _, ev26 in jes_2026.iterrows():
-                miasto = ev26["miasto"]
-                ev_data = pd.to_datetime(ev26["data"])
-                ev_id = int(ev26["ev_id"])
-
-                h = hist_timing[hist_timing["miasto"] == miasto]
-                if len(h) == 0:
-                    continue
-
-                # Cel z prog_df
-                prog_row = prog_df[prog_df["Event"] == ev26["symbol"]].iloc[0]
-                cel = prog_row["Cel (2x)"]
-
-                # Rozkład historyczny per miesiąc
-                h_dist = h.groupby("mies_przed")["id"].count()
-                h_dist_pct = (h_dist / h_dist.sum())
-
-                # Aktualne zamówienia 2026 per miesiąc
-                cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
-                cur_per_mies = cur_ev.groupby("mies_przed")["id"].count().to_dict()
-                aktualnie_total = len(cur_ev)
-
-                # Plan per miesiąc kalendarzowy
-                plan_rows = []
-                for mp in sorted(h_dist_pct.index, reverse=True):
-                    mies_data = ev_data - pd.DateOffset(months=mp)
-                    plan_zam = round(cel * h_dist_pct.get(mp, 0))
-                    realizacja = cur_per_mies.get(mp, 0)
-                    plan_rows.append({
-                        "Miesiąc": mies_data.strftime("%Y-%m"),
-                        "Mies. przed": mp,
-                        "% hist.": round(h_dist_pct.get(mp, 0) * 100, 1),
-                        "Plan zamówień": plan_zam,
-                        "Realizacja": int(realizacja),
-                    })
-
-                plan_df = pd.DataFrame(plan_rows)
-                plan_df["Plan kumulat."] = plan_df["Plan zamówień"].cumsum()
-                plan_df["Realiz. kumulat."] = plan_df["Realizacja"].cumsum()
-                plan_df["% realizacji"] = (plan_df["Realiz. kumulat."] / plan_df["Plan kumulat."].replace(0, 1) * 100).round(0)
-
-                with st.expander(f"{ev26['symbol']} — {miasto} ({ev_data.strftime('%Y-%m-%d')}) | Cel: {cel} zamówień | Aktualnie: {aktualnie_total}"):
-                    col_plan1, col_plan2 = st.columns([1, 2])
-                    with col_plan1:
-                        st.dataframe(plan_df.style.format({
-                            "% hist.": "{:.1f}%",
-                            "% realizacji": "{:.0f}%",
-                        }), hide_index=True, use_container_width=True)
-                    with col_plan2:
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(
-                            x=plan_df["Miesiąc"], y=plan_df["Plan zamówień"],
-                            name="Plan miesięczny", marker_color=COLORS[0],
-                            text=plan_df["Plan zamówień"], textposition="outside",
-                            opacity=0.5,
-                        ))
-                        fig.add_trace(go.Bar(
-                            x=plan_df["Miesiąc"], y=plan_df["Realizacja"],
-                            name="Realizacja", marker_color=COLORS[2],
-                            text=plan_df["Realizacja"], textposition="outside",
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=plan_df["Miesiąc"], y=plan_df["Plan kumulat."],
-                            name="Plan kumulat.", mode="lines+markers",
-                            line=dict(color=COLORS[0], width=2, dash="dash"),
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=plan_df["Miesiąc"], y=plan_df["Realiz. kumulat."],
-                            name="Realizacja kumulat.", mode="lines+markers+text",
-                            line=dict(color=COLORS[2], width=2),
-                            text=plan_df["Realiz. kumulat."], textposition="top center",
-                        ))
-                        fig.add_hline(y=cel, line_dash="dash", line_color="red",
-                                      annotation_text=f"Cel: {cel}")
-                        fig.update_layout(
-                            title=f"Plan sprzedaży — {ev26['symbol']}",
-                            xaxis_title="", yaxis_title="Zamówienia",
-                            legend=dict(orientation="h", y=-0.2),
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
