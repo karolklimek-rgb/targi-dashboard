@@ -1315,6 +1315,26 @@ with tab8:
                 use_container_width=True, hide_index=True,
             )
 
+            # Instrukcja odczytywania tabeli
+            with st.expander("Jak czytać tę tabelę?"):
+                st.markdown("""
+**Kolumny:**
+- **Zeszły rok** — ile zamówień miał ten event w ostatniej edycji jesiennej
+- **Cel (2x)** — cel sprzedażowy = dwukrotność zeszłego roku
+- **Aktualnie** — ile zamówień już wpłynęło na ten event
+- **% hist. wzorca** — jaki % wszystkich zamówień historycznie wpływał do tego momentu (tyle miesięcy przed eventem). Jeśli 0% — znaczy, że historycznie w tym okresie jeszcze żadne zamówienia nie wpływały
+- **Prognoza końcowa** — przewidywana liczba zamówień na koniec sprzedaży, obliczona na podstawie aktualnego tempa i historycznego wzorca
+- **Brakuje do celu** — ile zamówień trzeba jeszcze pozyskać, żeby osiągnąć cel 2x
+- **Prognoza vs cel** — czy prognoza osiągnie cel? >100% = przekroczymy cel, <100% = nie dojdziemy
+
+**Kolory w kolumnie "Prognoza vs cel":**
+- :green[Zielony] (>=80%) — na dobrej drodze do osiągnięcia celu
+- :orange[Żółty] (50-79%) — wymaga uwagi, sprzedaż poniżej oczekiwań
+- :red[Czerwony] (<50%) — alarm, znacząco poniżej celu
+
+**Uwaga:** Prognoza jest najbardziej wiarygodna gdy **% hist. wzorca > 30%**. Przy niskim % (np. 0-10%) prognoza opiera się na bardzo małej próbce i może być niedokładna.
+""")
+
             # Wykres: aktualnie vs cel vs prognoza
             st.subheader("Aktualny stan vs cel (2x zeszły rok)")
             prog_chart = prog_df[["Event", "Aktualnie", "Cel (2x)", "Prognoza końcowa"]].melt(
