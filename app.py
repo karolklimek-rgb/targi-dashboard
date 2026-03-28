@@ -878,8 +878,7 @@ with tab8:
     st.header("Targi jesienne 2026 — postęp sprzedaży")
 
     # Eventy jesienne 2026 (X, XI, XII) — niezależnie od filtrów w sidebarze
-    ev_all = data["events"]
-    ev_all["data_dt"] = pd.to_datetime(ev_all["data"], errors="coerce")
+    ev_all = events.copy()
     ev_all["miesiac_n"] = ev_all["data_dt"].dt.month
     ev_all["rok_n"] = ev_all["data_dt"].dt.year
     ev_jesien_2026 = ev_all[(ev_all["rok_n"] == 2026) & (ev_all["miesiac_n"].isin([10, 11, 12]))].copy()
@@ -894,19 +893,16 @@ with tab8:
     ev_jesien = pd.concat([ev_jesien_hist, ev_jesien_2026], ignore_index=True)
 
     # Zamówienia i bilety — bez filtrów sidebarowych, własne filtrowanie
-    zam_all = data["zamowienia"]
-    zam_jes = zam_all[
-        (zam_all["idtargi"].isin(ev_jesien["id"])) &
-        (zam_all["status"].astype(str) == "2") &
-        (zam_all["email"] != "targi@targimlodejpary.pl")
+    zam_jes = zamowienia[
+        (zamowienia["idtargi"].isin(ev_jesien["id"])) &
+        (zamowienia["status"].astype(str) == "2")
     ].copy()
     zam_jes["kwota_netto_n"] = pd.to_numeric(zam_jes["kwota_netto"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce").fillna(0)
     zam_jes["ilem2_n"] = pd.to_numeric(zam_jes["ilem2"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
 
-    bil_all = data["bilety"]
-    bil_jes = bil_all[
-        (bil_all["idtargi"].isin(ev_jesien["id"])) &
-        (bil_all["status"].isin([2, 3]))
+    bil_jes = bilety[
+        (bilety["idtargi"].isin(ev_jesien["id"])) &
+        (bilety["status"].isin([2, 3]))
     ].copy()
     bil_jes["kwota_netto_n"] = pd.to_numeric(bil_jes["kwota_netto"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce").fillna(0) / 100
     bil_jes["ileosob_n"] = pd.to_numeric(bil_jes["ileosob"], errors="coerce").fillna(0)
