@@ -1191,49 +1191,49 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                     })
 
                 plan_df = pd.DataFrame(plan_rows)
-                plan_df["Plan kumulat."] = plan_df["Plan zamówień"].cumsum()
-                plan_df["Realiz. kumulat."] = plan_df["Realizacja"].cumsum()
-                plan_df["% realizacji"] = (plan_df["Realiz. kumulat."] / plan_df["Plan kumulat."].replace(0, 1) * 100).round(0)
+                plan_df["Plan kum."] = plan_df["Plan zamówień"].cumsum()
+                plan_df["Real. kum."] = plan_df["Realizacja"].cumsum()
+                plan_df["% planu"] = (plan_df["Real. kum."] / plan_df["Plan kum."].replace(0, 1) * 100).round(0)
+                plan_df["% celu"] = (plan_df["Real. kum."] / cel * 100).round(1)
 
                 with st.expander(f"{ev26['symbol']} — {miasto} ({ev_data.strftime('%Y-%m-%d')}) | Cel: {cel} zamówień | Aktualnie: {aktualnie_total}"):
-                    col_plan1, col_plan2 = st.columns([1, 2])
-                    with col_plan1:
-                        st.dataframe(plan_df.style.format({
-                            "% hist.": "{:.1f}%",
-                            "% realizacji": "{:.0f}%",
-                        }), hide_index=True, use_container_width=True)
-                    with col_plan2:
-                        fig = go.Figure()
-                        fig.add_trace(go.Bar(
-                            x=plan_df["Miesiąc"], y=plan_df["Plan zamówień"],
-                            name="Plan miesięczny", marker_color=COLORS[0],
-                            text=plan_df["Plan zamówień"], textposition="outside",
-                            opacity=0.5,
-                        ))
-                        fig.add_trace(go.Bar(
-                            x=plan_df["Miesiąc"], y=plan_df["Realizacja"],
-                            name="Realizacja", marker_color=COLORS[2],
-                            text=plan_df["Realizacja"], textposition="outside",
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=plan_df["Miesiąc"], y=plan_df["Plan kumulat."],
-                            name="Plan kumulat.", mode="lines+markers",
-                            line=dict(color=COLORS[0], width=2, dash="dash"),
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=plan_df["Miesiąc"], y=plan_df["Realiz. kumulat."],
-                            name="Realizacja kumulat.", mode="lines+markers+text",
-                            line=dict(color=COLORS[2], width=2),
-                            text=plan_df["Realiz. kumulat."], textposition="top center",
-                        ))
-                        fig.add_hline(y=cel, line_dash="dash", line_color="red",
-                                      annotation_text=f"Cel: {cel}")
-                        fig.update_layout(
-                            title=f"Plan sprzedaży — {ev26['symbol']}",
-                            xaxis_title="", yaxis_title="Zamówienia",
-                            legend=dict(orientation="h", y=-0.2),
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
+                    st.dataframe(plan_df.style.format({
+                        "% hist.": "{:.1f}%",
+                        "% planu": "{:.0f}%",
+                        "% celu": "{:.1f}%",
+                    }), hide_index=True, use_container_width=True)
+
+                    fig = go.Figure()
+                    fig.add_trace(go.Bar(
+                        x=plan_df["Miesiąc"], y=plan_df["Plan zamówień"],
+                        name="Plan miesięczny", marker_color=COLORS[0],
+                        text=plan_df["Plan zamówień"], textposition="outside",
+                        opacity=0.5,
+                    ))
+                    fig.add_trace(go.Bar(
+                        x=plan_df["Miesiąc"], y=plan_df["Realizacja"],
+                        name="Realizacja", marker_color=COLORS[2],
+                        text=plan_df["Realizacja"], textposition="outside",
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=plan_df["Miesiąc"], y=plan_df["Plan kum."],
+                        name="Plan kumulat.", mode="lines+markers",
+                        line=dict(color=COLORS[0], width=2, dash="dash"),
+                    ))
+                    fig.add_trace(go.Scatter(
+                        x=plan_df["Miesiąc"], y=plan_df["Real. kum."],
+                        name="Realizacja kumulat.", mode="lines+markers+text",
+                        line=dict(color=COLORS[2], width=2),
+                        text=plan_df["Real. kum."], textposition="top center",
+                    ))
+                    fig.add_hline(y=cel, line_dash="dash", line_color="red",
+                                  annotation_text=f"Cel: {cel}")
+                    fig.update_layout(
+                        title=f"Plan sprzedaży — {ev26['symbol']}",
+                        xaxis_title="", yaxis_title="Zamówienia",
+                        legend=dict(orientation="h", y=-0.2),
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
 
