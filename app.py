@@ -1417,26 +1417,36 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                 h_dist = h.groupby("mies_przed")["id"].count()
                 h_dist_pct = (h_dist / h_dist.sum())
 
+                # Aktualne zamówienia 2026 per miesiąc
+                cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
+                cur_per_mies = cur_ev.groupby("mies_przed")["id"].count().to_dict()
+                aktualnie_total = len(cur_ev)
+
                 # Plan per miesiąc kalendarzowy
                 plan_rows = []
                 for mp in sorted(h_dist_pct.index, reverse=True):
                     mies_data = ev_data - pd.DateOffset(months=mp)
                     plan_zam = round(cel * h_dist_pct.get(mp, 0))
+                    realizacja = cur_per_mies.get(mp, 0)
                     plan_rows.append({
                         "Miesiąc": mies_data.strftime("%Y-%m"),
                         "Mies. przed": mp,
                         "% hist.": round(h_dist_pct.get(mp, 0) * 100, 1),
                         "Plan zamówień": plan_zam,
+                        "Realizacja": int(realizacja),
                     })
 
                 plan_df = pd.DataFrame(plan_rows)
                 plan_df["Plan kumulat."] = plan_df["Plan zamówień"].cumsum()
+                plan_df["Realiz. kumulat."] = plan_df["Realizacja"].cumsum()
+                plan_df["% realizacji"] = (plan_df["Realiz. kumulat."] / plan_df["Plan kumulat."].replace(0, 1) * 100).round(0)
 
-                with st.expander(f"{ev26['symbol']} — {miasto} ({ev_data.strftime('%Y-%m-%d')}) | Cel: {cel} zamówień"):
+                with st.expander(f"{ev26['symbol']} — {miasto} ({ev_data.strftime('%Y-%m-%d')}) | Cel: {cel} zamówień | Aktualnie: {aktualnie_total}"):
                     col_plan1, col_plan2 = st.columns([1, 2])
                     with col_plan1:
                         st.dataframe(plan_df.style.format({
                             "% hist.": "{:.1f}%",
+                            "% realizacji": "{:.0f}%",
                         }), hide_index=True, use_container_width=True)
                     with col_plan2:
                         fig = go.Figure()
@@ -1444,12 +1454,23 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                             x=plan_df["Miesiąc"], y=plan_df["Plan zamówień"],
                             name="Plan miesięczny", marker_color=COLORS[0],
                             text=plan_df["Plan zamówień"], textposition="outside",
+                            opacity=0.5,
+                        ))
+                        fig.add_trace(go.Bar(
+                            x=plan_df["Miesiąc"], y=plan_df["Realizacja"],
+                            name="Realizacja", marker_color=COLORS[2],
+                            text=plan_df["Realizacja"], textposition="outside",
                         ))
                         fig.add_trace(go.Scatter(
                             x=plan_df["Miesiąc"], y=plan_df["Plan kumulat."],
-                            name="Kumulatywnie", mode="lines+markers+text",
+                            name="Plan kumulat.", mode="lines+markers",
+                            line=dict(color=COLORS[0], width=2, dash="dash"),
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=plan_df["Miesiąc"], y=plan_df["Realiz. kumulat."],
+                            name="Realizacja kumulat.", mode="lines+markers+text",
                             line=dict(color=COLORS[2], width=2),
-                            text=plan_df["Plan kumulat."], textposition="top center",
+                            text=plan_df["Realiz. kumulat."], textposition="top center",
                         ))
                         fig.add_hline(y=cel, line_dash="dash", line_color="red",
                                       annotation_text=f"Cel: {cel}")
