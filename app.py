@@ -942,6 +942,7 @@ with tab8:
             frekwencja = round(wejscia / osoby * 100, 1) if osoby > 0 else 0
 
             jes_stats.append({
+                "ev_id": int(eid),
                 "symbol": ev["symbol"],
                 "data": ev["data"],
                 "miasto": ev["miasto"],
@@ -1243,7 +1244,7 @@ with tab8:
         for _, ev26 in jes_2026.iterrows():
             miasto = ev26["miasto"]
             ev_data = pd.to_datetime(ev26["data"])
-            ev_id = int(ev26["id"])
+            ev_id = int(ev26["ev_id"])
 
             # Historia tego miasta
             h = hist_timing[hist_timing["miasto"] == miasto]
@@ -1361,7 +1362,7 @@ with tab8:
             for _, ev26 in jes_2026.iterrows():
                 miasto = ev26["miasto"]
                 ev_data = pd.to_datetime(ev26["data"])
-                ev_id = int(ev26["id"])
+                ev_id = int(ev26["ev_id"])
 
                 h = hist_timing[hist_timing["miasto"] == miasto]
                 if len(h) == 0:
