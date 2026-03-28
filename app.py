@@ -875,20 +875,50 @@ with tab6:
 # TAB 8 — Targi jesienne
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with tab8:
-    st.header("Targi jesienne — kluczowe wskaźniki sprzedażowe")
+    st.header("Targi jesienne 2026 — postęp sprzedaży")
 
-    # Filtruj eventy jesienne (X, XI, XII)
-    ev_jesien_src = ev_filtered.copy()
-    ev_jesien_src["miesiac_n"] = pd.to_datetime(ev_jesien_src["data"], errors="coerce").dt.month
-    ev_jesien = ev_jesien_src[ev_jesien_src["miesiac_n"].isin([10, 11, 12])].copy()
+    # Eventy jesienne 2026 (X, XI, XII) — niezależnie od filtrów w sidebarze
+    ev_all = data["events"]
+    ev_all["data_dt"] = pd.to_datetime(ev_all["data"], errors="coerce")
+    ev_all["miesiac_n"] = ev_all["data_dt"].dt.month
+    ev_all["rok_n"] = ev_all["data_dt"].dt.year
+    ev_jesien_2026 = ev_all[(ev_all["rok_n"] == 2026) & (ev_all["miesiac_n"].isin([10, 11, 12]))].copy()
 
-    if ev_jesien.empty:
-        st.info("Brak eventów jesiennych w wybranym zakresie.")
+    # Historyczne jesienne eventy do porównania (te same miasta)
+    miasta_2026 = ev_jesien_2026["miasto"].unique().tolist()
+    ev_jesien_hist = ev_all[
+        (ev_all["rok_n"] < 2026) & (ev_all["rok_n"] >= 2022) &
+        (ev_all["miesiac_n"].isin([10, 11, 12])) &
+        (ev_all["miasto"].isin(miasta_2026))
+    ].copy()
+    ev_jesien = pd.concat([ev_jesien_hist, ev_jesien_2026], ignore_index=True)
+
+    # Zamówienia i bilety — bez filtrów sidebarowych, własne filtrowanie
+    zam_all = data["zamowienia"]
+    zam_jes = zam_all[
+        (zam_all["idtargi"].isin(ev_jesien["id"])) &
+        (zam_all["status"].astype(str) == "2") &
+        (zam_all["email"] != "targi@targimlodejpary.pl")
+    ].copy()
+    zam_jes["kwota_netto_n"] = pd.to_numeric(zam_jes["kwota_netto"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce").fillna(0)
+    zam_jes["ilem2_n"] = pd.to_numeric(zam_jes["ilem2"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
+
+    bil_all = data["bilety"]
+    bil_jes = bil_all[
+        (bil_all["idtargi"].isin(ev_jesien["id"])) &
+        (bil_all["status"].isin([2, 3]))
+    ].copy()
+    bil_jes["kwota_netto_n"] = pd.to_numeric(bil_jes["kwota_netto"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce").fillna(0) / 100
+    bil_jes["ileosob_n"] = pd.to_numeric(bil_jes["ileosob"], errors="coerce").fillna(0)
+    bil_wej_jes = bil_jes[bil_jes["ts_wejscie"].apply(lambda x: x is not None and str(x).strip() not in ("", "0"))]
+
+    if ev_jesien_2026.empty:
+        st.info("Brak eventów jesiennych 2026 w bazie.")
     else:
         # Dane per event jesienny
-        jes_zam = zam_active[zam_active["idtargi"].isin(ev_jesien["id"])].copy()
-        jes_bil = bil_f[bil_f["idtargi"].isin(ev_jesien["id"])].copy()
-        jes_wej = bil_wejscia[bil_wejscia["idtargi"].isin(ev_jesien["id"])].copy()
+        jes_zam = zam_jes
+        jes_bil = bil_jes
+        jes_wej = bil_wej_jes
 
         # Buduj tabelę per event
         jes_stats = []
@@ -930,31 +960,109 @@ with tab8:
         jes_df = pd.DataFrame(jes_stats)
         jes_df = jes_df.sort_values("data", ascending=False)
 
-        # KPI ogólne dla targów jesiennych
+        # Rozdziel dane 2026 vs historia
+        jes_2026 = jes_df[jes_df["rok"] == 2026]
+        jes_hist = jes_df[jes_df["rok"] < 2026]
+
+        # KPI — jesień 2026 z porównaniem do śr. historycznej
+        st.subheader("Jesień 2026 — aktualny stan sprzedaży")
+
+        # Średnie historyczne per event (do porównania)
+        if not jes_hist.empty:
+            hist_per_ev = jes_hist.groupby("miasto").agg(
+                sr_zamowien=("zamowien", "mean"),
+                sr_m2=("m2", "mean"),
+                sr_przychod=("przychod_stoiska", "mean"),
+            )
+
         kj1, kj2, kj3, kj4, kj5 = st.columns(5)
-        kj1.metric("Eventów jesiennych", len(jes_df))
-        kj2.metric("Łączny przychód", f"{jes_df['przychod_lacznie'].sum():,.0f} zł")
-        kj3.metric("Przychód ze stoisk", f"{jes_df['przychod_stoiska'].sum():,.0f} zł")
-        kj4.metric("Łącznie zamówień", int(jes_df["zamowien"].sum()))
-        kj5.metric("Łącznie m²", f"{jes_df['m2'].sum():,.0f}")
+        kj1.metric("Eventów jesień 2026", len(jes_2026))
+        kj2.metric("Zamówienia (łącznie)", int(jes_2026["zamowien"].sum()))
+        kj3.metric("Przychód ze stoisk", f"{jes_2026['przychod_stoiska'].sum():,.0f} zł")
+        kj4.metric("Sprzedane m²", f"{jes_2026['m2'].sum():,.0f}")
+        kj5.metric("Dni do pierwszego eventu",
+                    max(0, (pd.to_datetime(jes_2026["data"].min()) - pd.Timestamp.now()).days))
 
         st.divider()
 
-        # Tabela szczegółowa per event
-        st.subheader("Zestawienie per event")
-        display_jes = jes_df[[
+        # Tabela per event 2026 z porównaniem do historii
+        st.subheader("Postęp sprzedaży per event — jesień 2026")
+
+        display_rows = []
+        for _, ev26 in jes_2026.iterrows():
+            miasto = ev26["miasto"]
+            hist_miasto = jes_hist[jes_hist["miasto"] == miasto]
+            sr_zam = hist_miasto["zamowien"].mean() if len(hist_miasto) > 0 else 0
+            sr_m2 = hist_miasto["m2"].mean() if len(hist_miasto) > 0 else 0
+            sr_prz = hist_miasto["przychod_stoiska"].mean() if len(hist_miasto) > 0 else 0
+
+            pct_zam = round(ev26["zamowien"] / sr_zam * 100, 0) if sr_zam > 0 else 0
+            pct_m2 = round(ev26["m2"] / sr_m2 * 100, 0) if sr_m2 > 0 else 0
+            pct_prz = round(ev26["przychod_stoiska"] / sr_prz * 100, 0) if sr_prz > 0 else 0
+
+            display_rows.append({
+                "Event": ev26["symbol"],
+                "Miasto": miasto,
+                "Data": ev26["data"],
+                "Zamówień": ev26["zamowien"],
+                "Śr. hist.": round(sr_zam, 0),
+                "% normy (zam.)": pct_zam,
+                "m²": ev26["m2"],
+                "Śr. m² hist.": round(sr_m2, 0),
+                "% normy (m²)": pct_m2,
+                "Przychód stoiska": ev26["przychod_stoiska"],
+                "Śr. przych. hist.": round(sr_prz, 0),
+                "% normy (przych.)": pct_prz,
+                "Cena/m²": ev26["cena_m2"],
+            })
+
+        disp_2026 = pd.DataFrame(display_rows)
+        disp_2026["Data"] = pd.to_datetime(disp_2026["Data"]).dt.strftime("%Y-%m-%d")
+        st.dataframe(
+            disp_2026.style.format({
+                "Śr. hist.": "{:.0f}", "% normy (zam.)": "{:.0f}%",
+                "Śr. m² hist.": "{:.0f}", "% normy (m²)": "{:.0f}%",
+                "Przychód stoiska": "{:,.0f} zł", "Śr. przych. hist.": "{:,.0f} zł",
+                "% normy (przych.)": "{:.0f}%", "Cena/m²": "{:.0f} zł",
+                "m²": "{:.0f}",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+        # Wykres: % normy per event
+        st.subheader("Realizacja vs średnia historyczna")
+        norma_df = pd.DataFrame(display_rows)
+        norma_melt = norma_df[["Event", "% normy (zam.)", "% normy (m²)", "% normy (przych.)"]].melt(
+            id_vars="Event", var_name="Wskaźnik", value_name="% normy"
+        )
+        fig = px.bar(norma_melt, x="Event", y="% normy", color="Wskaźnik",
+                     barmode="group", color_discrete_sequence=[COLORS[0], COLORS[2], COLORS[4]],
+                     text="% normy")
+        fig.update_traces(texttemplate="%{text:.0f}%", textposition="outside", textfont_size=9)
+        fig.add_hline(y=100, line_dash="dash", line_color="red",
+                      annotation_text="100% = średnia historyczna", annotation_position="top left")
+        fig.update_layout(xaxis_title="", yaxis_title="% realizacji vs historia", legend_title="")
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.divider()
+
+        # Porównanie historyczne per miasto
+        st.subheader("Porównanie z poprzednimi latami (te same miasta)")
+
+        # Tabela historyczna
+        display_jes_all = jes_df[[
             "symbol", "miasto", "data", "zamowien", "m2", "sr_m2_stoisko", "cena_m2",
             "przychod_stoiska", "osoby_bilety", "sr_cena_bilet", "przychod_bilety",
             "przychod_lacznie", "wejscia", "frekwencja"
         ]].copy()
-        display_jes.columns = [
+        display_jes_all.columns = [
             "Event", "Miasto", "Data", "Zamówień", "m²", "Śr. m²/stoisko", "Cena/m²",
             "Przychód stoiska", "Osoby (bilety)", "Śr. cena biletu", "Przychód bilety",
             "Przychód łącznie", "Wejścia", "Frekwencja %"
         ]
-        display_jes["Data"] = pd.to_datetime(display_jes["Data"]).dt.strftime("%Y-%m-%d")
+        display_jes_all["Data"] = pd.to_datetime(display_jes_all["Data"]).dt.strftime("%Y-%m-%d")
         st.dataframe(
-            display_jes.style.format({
+            display_jes_all.style.format({
                 "Cena/m²": "{:.0f} zł", "Przychód stoiska": "{:,.0f} zł",
                 "Śr. cena biletu": "{:.0f} zł", "Przychód bilety": "{:,.0f} zł",
                 "Przychód łącznie": "{:,.0f} zł", "Frekwencja %": "{:.1f}%",
