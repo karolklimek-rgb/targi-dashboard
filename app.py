@@ -893,15 +893,17 @@ with tab8:
     ev_jesien = pd.concat([ev_jesien_hist, ev_jesien_2026], ignore_index=True)
 
     # Zamówienia i bilety — bez filtrów sidebarowych, własne filtrowanie
+    jes_event_ids = ev_jesien["id"].astype(int).tolist()
     zam_jes = zamowienia[
-        (zamowienia["idtargi"].isin(ev_jesien["id"])) &
+        (pd.to_numeric(zamowienia["idtargi"], errors="coerce").isin(jes_event_ids)) &
         (zamowienia["status"].astype(str) == "2")
     ].copy()
     zam_jes["kwota_netto_n"] = pd.to_numeric(zam_jes["kwota_netto"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce").fillna(0)
     zam_jes["ilem2_n"] = pd.to_numeric(zam_jes["ilem2"].astype(str).str.replace(",", "."), errors="coerce").fillna(0)
+    zam_jes["idtargi_n"] = pd.to_numeric(zam_jes["idtargi"], errors="coerce")
 
     bil_jes = bilety[
-        (bilety["idtargi"].isin(ev_jesien["id"])) &
+        (pd.to_numeric(bilety["idtargi"], errors="coerce").isin(jes_event_ids)) &
         (bilety["status"].isin([2, 3]))
     ].copy()
     bil_jes["kwota_netto_n"] = pd.to_numeric(bil_jes["kwota_netto"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce").fillna(0) / 100
@@ -917,12 +919,16 @@ with tab8:
         jes_wej = bil_wej_jes
 
         # Buduj tabelę per event
+        jes_zam["idtargi_n"] = pd.to_numeric(jes_zam["idtargi"], errors="coerce")
+        jes_bil["idtargi_n"] = pd.to_numeric(jes_bil["idtargi"], errors="coerce")
+        jes_wej["idtargi_n"] = pd.to_numeric(jes_wej["idtargi"], errors="coerce")
+
         jes_stats = []
         for _, ev in ev_jesien.iterrows():
-            eid = ev["id"]
-            z = jes_zam[jes_zam["idtargi"] == eid]
-            b = jes_bil[jes_bil["idtargi"] == eid]
-            w = jes_wej[jes_wej["idtargi"] == eid]
+            eid = int(ev["id"])
+            z = jes_zam[jes_zam["idtargi_n"] == eid]
+            b = jes_bil[jes_bil["idtargi_n"] == eid]
+            w = jes_wej[jes_wej["idtargi_n"] == eid]
 
             przychod_st = z["kwota_netto_n"].sum()
             m2 = z["ilem2_n"].sum()
