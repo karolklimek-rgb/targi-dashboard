@@ -1354,6 +1354,24 @@ with tab8:
 
             # Wykres: historyczny rozkład zamówień wg miesięcy przed eventem
             st.subheader("Kiedy wpływają zamówienia? (historyczny wzorzec)")
+            with st.expander("Jak czytać te wykresy?"):
+                st.markdown("""
+**Lewy wykres — % zamówień per miesiąc przed eventem:**
+Pokazuje w którym momencie przed targami historycznie wpływały zamówienia na stoiska.
+Np. "2 mies. przed = 21.7%" oznacza, że co piąte zamówienie wpływa na 2 miesiące przed wydarzeniem.
+
+**Prawy wykres — skumulowany % zamówień:**
+Pokazuje ile % wszystkich zamówień jest już złożonych na X miesięcy przed eventem.
+Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopiero ~62% zamówień — reszta wpłynie w ostatnich 3 miesiącach.
+
+**Kluczowe wnioski:**
+- Sprzedaż startuje ~7 mies. przed eventem (pierwsza fala ~15% zamówień)
+- Pik sprzedaży to 1-2 miesiące przed eventem (~40% zamówień)
+- Na miesiąc przed targami brakuje jeszcze ~15-20% zamówień
+- Zamówienia wpływają nawet w miesiącu eventu (~8%)
+
+**Jak to wykorzystać:** Jeśli na 3 mies. przed eventem masz mniej niż 62% celu — czas zintensyfikować działania sprzedażowe. Jeśli masz więcej — jesteś powyżej normy.
+""")
             hist_dist_all = hist_timing.groupby("mies_przed")["id"].count().reset_index(name="zamowien")
             hist_dist_all["pct"] = (hist_dist_all["zamowien"] / hist_dist_all["zamowien"].sum() * 100).round(1)
             hist_dist_all["pct_kum"] = hist_dist_all["pct"].cumsum().round(1)
