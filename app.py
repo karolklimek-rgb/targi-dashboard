@@ -1158,6 +1158,24 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                 st.plotly_chart(fig, use_container_width=True)
 
             st.subheader("Plan sprzedaży miesięczny per event")
+            with st.expander("Jak czytać te tabele?"):
+                st.markdown("""
+**Kolumny:**
+- **Miesiąc** — miesiąc kalendarzowy
+- **Mies. przed** — ile miesięcy przed datą eventu (0 = miesiąc eventu)
+- **% hist.** — jaki procent wszystkich zamówień historycznie wpływał w tym miesiącu przed eventem
+- **Plan zamówień** — ile zamówień powinno wpłynąć w tym miesiącu żeby osiągnąć cel (na podstawie historycznego rozkładu)
+- **Realizacja** — ile zamówień faktycznie wpłynęło w tym miesiącu
+- **Plan kum.** — planowana suma narastająca zamówień
+- **Real. kum.** — faktyczna suma narastająca zamówień
+- **% planu** — realizacja kumulatywna vs plan kumulatywny (ile % planu zrealizowano na dany moment)
+- **% celu** — realizacja kumulatywna jako procent celu końcowego
+
+**Wykres pod tabelą:**
+- Półprzezroczyste słupki = plan miesięczny, kolorowe = realizacja
+- Przerywana linia = plan kumulatywny, ciągła = realizacja kumulatywna
+- Czerwona linia przerywana = cel końcowy
+""")
             for _, ev26 in jes_2026.iterrows():
                 miasto = ev26["miasto"]
                 ev_data = pd.to_datetime(ev26["data"])
@@ -1240,6 +1258,20 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
 
         # Tabela per event 2026 z porównaniem do historii
         st.subheader("Postęp sprzedaży per event — jesień 2026")
+        with st.expander("Jak czytać tę tabelę?"):
+            st.markdown("""
+**Kolumny:**
+- **Zamówień** — ile zamówień aktualnie ma ten event (status: w realizacji)
+- **Śr. hist.** — średnia liczba zamówień z poprzednich jesiennych edycji tego miasta
+- **% normy (zam.)** — aktualnie zamówień vs średnia historyczna (100% = na poziomie średniej)
+- **m²** — łącznie sprzedanych metrów kwadratowych
+- **Śr. m² hist.** — średnia historyczna m² dla tego miasta
+- **% normy (m²)** — jak wyżej, ale dla metrów kwadratowych
+- **Przychód stoiska** — aktualny przychód netto ze stoisk
+- **Śr. przych. hist.** — średni historyczny przychód dla tego miasta
+- **% normy (przych.)** — aktualny przychód vs średnia historyczna
+- **Cena/m²** — aktualna średnia cena za metr kwadratowy
+""")
 
         display_rows = []
         for _, ev26 in jes_2026.iterrows():
