@@ -1024,7 +1024,15 @@ with tab8:
             last_year = hist_same[hist_same["rok"] == hist_same["rok"].max()]
             last_year_zam = last_year["zamowien"].sum() if len(last_year) > 0 else h_total_per_ev
 
-            cel_100pct = int(last_year_zam * 2)
+            # Ręczne cele sprzedażowe per miasto
+            cele_reczne = {
+                "Rzeszów": 30,
+                "Kraków": 45,
+                "Gdańsk": 52,
+                "Gliwice": 28,
+                "Białystok": 34,
+            }
+            cel_100pct = cele_reczne.get(miasto, int(last_year_zam * 2))
 
             cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
             aktualnie = len(cur_ev)
@@ -1045,7 +1053,7 @@ with tab8:
                 "Data eventu": ev_data.strftime("%Y-%m-%d"),
                 "Dni do eventu": dni_do,
                 "Zeszły rok": int(last_year_zam),
-                "Cel (2x)": cel_100pct,
+                "Cel": cel_100pct,
                 "Aktualnie": aktualnie,
                 "% hist. wzorca": round(pct_juz * 100, 1),
                 "Prognoza końcowa": prognoza_total,
@@ -1073,7 +1081,7 @@ with tab8:
                 st.markdown("""
 **Kolumny:**
 - **Zeszły rok** — ile zamówień miał ten event w ostatniej edycji jesiennej
-- **Cel (2x)** — cel sprzedażowy = dwukrotność zeszłego roku
+- **Cel** — cel sprzedażowy ustalony dla danego miasta
 - **Aktualnie** — ile zamówień już wpłynęło na ten event
 - **% hist. wzorca** — jaki % wszystkich zamówień historycznie wpływał do tego momentu (tyle miesięcy przed eventem). Jeśli 0% — znaczy, że historycznie w tym okresie jeszcze żadne zamówienia nie wpływały
 - **Prognoza końcowa** — przewidywana liczba zamówień na koniec sprzedaży, obliczona na podstawie aktualnego tempa i historycznego wzorca
@@ -1089,14 +1097,14 @@ with tab8:
 """)
 
             st.subheader("Aktualny stan vs cel (2x zeszły rok)")
-            prog_chart = prog_df[["Event", "Aktualnie", "Cel (2x)", "Prognoza końcowa"]].melt(
+            prog_chart = prog_df[["Event", "Aktualnie", "Cel", "Prognoza końcowa"]].melt(
                 id_vars="Event", var_name="Typ", value_name="Zamówień"
             )
             fig = px.bar(prog_chart, x="Event", y="Zamówień", color="Typ",
                          barmode="group",
                          color_discrete_map={
                              "Aktualnie": COLORS[2],
-                             "Cel (2x)": COLORS[1],
+                             "Cel": COLORS[1],
                              "Prognoza końcowa": COLORS[4],
                          },
                          text="Zamówień")
@@ -1160,7 +1168,7 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                     continue
 
                 prog_row = prog_df[prog_df["Event"] == ev26["symbol"]].iloc[0]
-                cel = prog_row["Cel (2x)"]
+                cel = prog_row["Cel"]
 
                 h_dist = h.groupby("mies_przed")["id"].count()
                 h_dist_pct = (h_dist / h_dist.sum())
