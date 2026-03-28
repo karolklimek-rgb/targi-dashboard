@@ -130,13 +130,14 @@ bil_wejscia = bil_f[bil_f["ts_wejscie"].notna() & (bil_f["ts_wejscie"] != "")]
 
 # ── TABS ─────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab8, tab7 = st.tabs([
     "Przegląd ogólny",
     "Eventy i miasta",
     "Bilety",
     "Wystawcy i zamówienia",
     "Przychody i płatności",
     "Leady i rabaty",
+    "Targi jesienne",
     "Analizy i wnioski",
 ])
 
@@ -868,6 +869,239 @@ with tab6:
                      color_discrete_sequence=[COLORS[3]], text_auto=".2s")
         fig.update_layout(yaxis_title="Kod", xaxis_title="zł")
         st.plotly_chart(fig, use_container_width=True)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TAB 8 — Targi jesienne
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab8:
+    st.header("Targi jesienne — kluczowe wskaźniki sprzedażowe")
+
+    # Filtruj eventy jesienne (X, XI, XII)
+    ev_jesien = ev_filtered[ev_filtered["miesiac"].isin([10, 11, 12])].copy()
+
+    if ev_jesien.empty:
+        st.info("Brak eventów jesiennych w wybranym zakresie.")
+    else:
+        # Dane per event jesienny
+        jes_zam = zam_active[zam_active["idtargi"].isin(ev_jesien["id"])].copy()
+        jes_bil = bil_f[bil_f["idtargi"].isin(ev_jesien["id"])].copy()
+        jes_wej = bil_wejscia[bil_wejscia["idtargi"].isin(ev_jesien["id"])].copy()
+
+        # Buduj tabelę per event
+        jes_stats = []
+        for _, ev in ev_jesien.iterrows():
+            eid = ev["id"]
+            z = jes_zam[jes_zam["idtargi"] == eid]
+            b = jes_bil[jes_bil["idtargi"] == eid]
+            w = jes_wej[jes_wej["idtargi"] == eid]
+
+            przychod_st = z["kwota_netto_n"].sum()
+            m2 = z["ilem2_n"].sum()
+            zamowien = len(z)
+            cena_m2 = round(przychod_st / m2, 0) if m2 > 0 else 0
+            sr_m2_stoisko = round(m2 / zamowien, 1) if zamowien > 0 else 0
+            osoby = b["ileosob_n"].sum()
+            przychod_bil = b["kwota_netto_n"].sum()
+            sr_cena_bilet = round(przychod_bil / osoby, 0) if osoby > 0 else 0
+            wejscia = w["ileosob_n"].sum()
+            frekwencja = round(wejscia / osoby * 100, 1) if osoby > 0 else 0
+
+            jes_stats.append({
+                "symbol": ev["symbol"],
+                "data": ev["data"],
+                "miasto": ev["miasto"],
+                "rok": ev["rok"],
+                "zamowien": zamowien,
+                "m2": m2,
+                "sr_m2_stoisko": sr_m2_stoisko,
+                "cena_m2": cena_m2,
+                "przychod_stoiska": przychod_st,
+                "osoby_bilety": osoby,
+                "sr_cena_bilet": sr_cena_bilet,
+                "przychod_bilety": przychod_bil,
+                "przychod_lacznie": przychod_st + przychod_bil,
+                "wejscia": wejscia,
+                "frekwencja": frekwencja,
+            })
+
+        jes_df = pd.DataFrame(jes_stats)
+        jes_df = jes_df.sort_values("data", ascending=False)
+
+        # KPI ogólne dla targów jesiennych
+        kj1, kj2, kj3, kj4, kj5 = st.columns(5)
+        kj1.metric("Eventów jesiennych", len(jes_df))
+        kj2.metric("Łączny przychód", f"{jes_df['przychod_lacznie'].sum():,.0f} zł")
+        kj3.metric("Przychód ze stoisk", f"{jes_df['przychod_stoiska'].sum():,.0f} zł")
+        kj4.metric("Łącznie zamówień", int(jes_df["zamowien"].sum()))
+        kj5.metric("Łącznie m²", f"{jes_df['m2'].sum():,.0f}")
+
+        st.divider()
+
+        # Tabela szczegółowa per event
+        st.subheader("Zestawienie per event")
+        display_jes = jes_df[[
+            "symbol", "miasto", "data", "zamowien", "m2", "sr_m2_stoisko", "cena_m2",
+            "przychod_stoiska", "osoby_bilety", "sr_cena_bilet", "przychod_bilety",
+            "przychod_lacznie", "wejscia", "frekwencja"
+        ]].copy()
+        display_jes.columns = [
+            "Event", "Miasto", "Data", "Zamówień", "m²", "Śr. m²/stoisko", "Cena/m²",
+            "Przychód stoiska", "Osoby (bilety)", "Śr. cena biletu", "Przychód bilety",
+            "Przychód łącznie", "Wejścia", "Frekwencja %"
+        ]
+        display_jes["Data"] = pd.to_datetime(display_jes["Data"]).dt.strftime("%Y-%m-%d")
+        st.dataframe(
+            display_jes.style.format({
+                "Cena/m²": "{:.0f} zł", "Przychód stoiska": "{:,.0f} zł",
+                "Śr. cena biletu": "{:.0f} zł", "Przychód bilety": "{:,.0f} zł",
+                "Przychód łącznie": "{:,.0f} zł", "Frekwencja %": "{:.1f}%",
+                "m²": "{:.0f}", "Śr. m²/stoisko": "{:.1f}",
+            }),
+            use_container_width=True, hide_index=True,
+        )
+
+        st.divider()
+
+        # Wykresy porównawcze
+        st.subheader("Porównanie rok do roku")
+
+        # Przychód ze stoisk per miasto/rok
+        col_j1, col_j2 = st.columns(2)
+
+        with col_j1:
+            jes_miasto_rok = jes_df.groupby(["miasto", "rok"]).agg(
+                przychod=("przychod_stoiska", "sum"),
+            ).reset_index()
+            jes_miasto_rok["rok"] = jes_miasto_rok["rok"].astype(str)
+            fig = px.bar(jes_miasto_rok, x="miasto", y="przychod", color="rok",
+                         title="Przychód ze stoisk — jesień per miasto/rok",
+                         color_discrete_sequence=COLORS, barmode="group",
+                         text="przychod")
+            fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside", textfont_size=9)
+            fig.update_layout(xaxis_title="", yaxis_title="zł netto", legend_title="Rok")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_j2:
+            jes_m2_rok = jes_df.groupby(["miasto", "rok"]).agg(
+                m2=("m2", "sum"),
+            ).reset_index()
+            jes_m2_rok["rok"] = jes_m2_rok["rok"].astype(str)
+            fig = px.bar(jes_m2_rok, x="miasto", y="m2", color="rok",
+                         title="Sprzedane m² — jesień per miasto/rok",
+                         color_discrete_sequence=COLORS, barmode="group",
+                         text="m2")
+            fig.update_traces(texttemplate="%{text:.0f}", textposition="outside", textfont_size=9)
+            fig.update_layout(xaxis_title="", yaxis_title="m²", legend_title="Rok")
+            st.plotly_chart(fig, use_container_width=True)
+
+        col_j3, col_j4 = st.columns(2)
+
+        with col_j3:
+            jes_zamowien_rok = jes_df.groupby(["miasto", "rok"]).agg(
+                zamowien=("zamowien", "sum"),
+            ).reset_index()
+            jes_zamowien_rok["rok"] = jes_zamowien_rok["rok"].astype(str)
+            fig = px.bar(jes_zamowien_rok, x="miasto", y="zamowien", color="rok",
+                         title="Zamówienia — jesień per miasto/rok",
+                         color_discrete_sequence=COLORS, barmode="group",
+                         text="zamowien")
+            fig.update_traces(textposition="outside", textfont_size=9)
+            fig.update_layout(xaxis_title="", yaxis_title="Zamówień", legend_title="Rok")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_j4:
+            jes_cena_rok = jes_df[jes_df["m2"] > 0].groupby(["miasto", "rok"]).apply(
+                lambda g: pd.Series({
+                    "cena_m2": g["przychod_stoiska"].sum() / g["m2"].sum(),
+                })
+            ).reset_index()
+            jes_cena_rok["rok"] = jes_cena_rok["rok"].astype(str)
+            fig = px.bar(jes_cena_rok, x="miasto", y="cena_m2", color="rok",
+                         title="Śr. cena za m² — jesień per miasto/rok",
+                         color_discrete_sequence=COLORS, barmode="group",
+                         text="cena_m2")
+            fig.update_traces(texttemplate="%{text:.0f} zł", textposition="outside", textfont_size=9)
+            fig.update_layout(xaxis_title="", yaxis_title="zł / m²", legend_title="Rok")
+            st.plotly_chart(fig, use_container_width=True)
+
+        col_j5, col_j6 = st.columns(2)
+
+        with col_j5:
+            jes_osoby_rok = jes_df.groupby(["miasto", "rok"]).agg(
+                osoby=("osoby_bilety", "sum"),
+            ).reset_index()
+            jes_osoby_rok["rok"] = jes_osoby_rok["rok"].astype(str)
+            fig = px.bar(jes_osoby_rok, x="miasto", y="osoby", color="rok",
+                         title="Osoby (bilety) — jesień per miasto/rok",
+                         color_discrete_sequence=COLORS, barmode="group",
+                         text="osoby")
+            fig.update_traces(textposition="outside", textfont_size=9)
+            fig.update_layout(xaxis_title="", yaxis_title="Osób", legend_title="Rok")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_j6:
+            jes_frekw_rok = jes_df[jes_df["osoby_bilety"] > 0].groupby(["miasto", "rok"]).apply(
+                lambda g: pd.Series({
+                    "frekwencja": g["wejscia"].sum() / g["osoby_bilety"].sum() * 100,
+                })
+            ).reset_index()
+            jes_frekw_rok["rok"] = jes_frekw_rok["rok"].astype(str)
+            fig = px.bar(jes_frekw_rok, x="miasto", y="frekwencja", color="rok",
+                         title="Frekwencja % — jesień per miasto/rok",
+                         color_discrete_sequence=COLORS, barmode="group",
+                         text="frekwencja")
+            fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside", textfont_size=9)
+            fig.update_layout(xaxis_title="", yaxis_title="%", legend_title="Rok")
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Trend roczny — łączne przychody jesień
+        st.divider()
+        st.subheader("Trend roczny — jesień łącznie")
+
+        col_jt1, col_jt2 = st.columns(2)
+        jes_rok = jes_df.groupby("rok").agg(
+            przychod_stoiska=("przychod_stoiska", "sum"),
+            przychod_bilety=("przychod_bilety", "sum"),
+            przychod_lacznie=("przychod_lacznie", "sum"),
+            zamowien=("zamowien", "sum"),
+            m2=("m2", "sum"),
+            osoby=("osoby_bilety", "sum"),
+            eventow=("symbol", "count"),
+        ).reset_index()
+
+        with col_jt1:
+            jes_rok_melt = jes_rok[["rok", "przychod_stoiska", "przychod_bilety"]].melt(
+                id_vars="rok", var_name="typ", value_name="przychod"
+            )
+            jes_rok_melt["typ"] = jes_rok_melt["typ"].map({
+                "przychod_stoiska": "Stoiska",
+                "przychod_bilety": "Bilety",
+            })
+            fig = px.bar(jes_rok_melt, x="rok", y="przychod", color="typ",
+                         title="Łączny przychód jesień — stoiska vs bilety",
+                         color_discrete_sequence=[COLORS[2], COLORS[0]],
+                         text="przychod", barmode="stack")
+            fig.update_traces(texttemplate="%{text:,.0f}", textfont_size=9)
+            fig.update_xaxes(dtick=1)
+            # Dodaj łączną sumę na szczycie
+            for _, row in jes_rok.iterrows():
+                fig.add_annotation(
+                    x=row["rok"], y=row["przychod_lacznie"],
+                    text=f"<b>{row['przychod_lacznie']:,.0f}</b>",
+                    showarrow=False, yshift=14, font=dict(size=11),
+                )
+            fig.update_layout(xaxis_title="Rok", yaxis_title="zł netto", legend_title="")
+            st.plotly_chart(fig, use_container_width=True)
+
+        with col_jt2:
+            fig = px.bar(jes_rok, x="rok", y="zamowien",
+                         title="Zamówienia jesień — trend roczny",
+                         color_discrete_sequence=[COLORS[4]], text="zamowien")
+            fig.update_traces(textposition="outside")
+            fig.update_xaxes(dtick=1)
+            fig.update_layout(xaxis_title="Rok", yaxis_title="Zamówień")
+            st.plotly_chart(fig, use_container_width=True)
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
