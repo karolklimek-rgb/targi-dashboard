@@ -1191,6 +1191,7 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                     })
 
                 plan_df = pd.DataFrame(plan_rows)
+                plan_df = plan_df[plan_df["Mies. przed"] >= 0]
                 plan_df["Plan kum."] = plan_df["Plan zamówień"].cumsum()
                 plan_df["Real. kum."] = plan_df["Realizacja"].cumsum()
                 plan_df["% planu"] = (plan_df["Real. kum."] / plan_df["Plan kum."].replace(0, 1) * 100).round(0)
