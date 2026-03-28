@@ -1123,11 +1123,12 @@ with tab8:
             st.plotly_chart(fig, use_container_width=True)
 
         with col_j4:
-            jes_cena_rok = jes_df[jes_df["m2"] > 0].groupby(["miasto", "rok"]).apply(
-                lambda g: pd.Series({
-                    "cena_m2": g["przychod_stoiska"].sum() / g["m2"].sum(),
-                })
+            jes_cena_src = jes_df[jes_df["m2"] > 0].groupby(["miasto", "rok"]).agg(
+                przychod_sum=("przychod_stoiska", "sum"),
+                m2_sum=("m2", "sum"),
             ).reset_index()
+            jes_cena_src["cena_m2"] = jes_cena_src["przychod_sum"] / jes_cena_src["m2_sum"]
+            jes_cena_rok = jes_cena_src
             jes_cena_rok["rok"] = jes_cena_rok["rok"].astype(str)
             fig = px.bar(jes_cena_rok, x="miasto", y="cena_m2", color="rok",
                          title="Śr. cena za m² — jesień per miasto/rok",
@@ -1153,11 +1154,12 @@ with tab8:
             st.plotly_chart(fig, use_container_width=True)
 
         with col_j6:
-            jes_frekw_rok = jes_df[jes_df["osoby_bilety"] > 0].groupby(["miasto", "rok"]).apply(
-                lambda g: pd.Series({
-                    "frekwencja": g["wejscia"].sum() / g["osoby_bilety"].sum() * 100,
-                })
+            jes_frekw_src = jes_df[jes_df["osoby_bilety"] > 0].groupby(["miasto", "rok"]).agg(
+                wejscia_sum=("wejscia", "sum"),
+                osoby_sum=("osoby_bilety", "sum"),
             ).reset_index()
+            jes_frekw_src["frekwencja"] = jes_frekw_src["wejscia_sum"] / jes_frekw_src["osoby_sum"] * 100
+            jes_frekw_rok = jes_frekw_src
             jes_frekw_rok["rok"] = jes_frekw_rok["rok"].astype(str)
             fig = px.bar(jes_frekw_rok, x="miasto", y="frekwencja", color="rok",
                          title="Frekwencja % — jesień per miasto/rok",
