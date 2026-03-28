@@ -878,7 +878,9 @@ with tab8:
     st.header("Targi jesienne — kluczowe wskaźniki sprzedażowe")
 
     # Filtruj eventy jesienne (X, XI, XII)
-    ev_jesien = ev_filtered[ev_filtered["miesiac"].isin([10, 11, 12])].copy()
+    ev_jesien_src = ev_filtered.copy()
+    ev_jesien_src["miesiac_n"] = pd.to_datetime(ev_jesien_src["data"], errors="coerce").dt.month
+    ev_jesien = ev_jesien_src[ev_jesien_src["miesiac_n"].isin([10, 11, 12])].copy()
 
     if ev_jesien.empty:
         st.info("Brak eventów jesiennych w wybranym zakresie.")
