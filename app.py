@@ -1227,6 +1227,9 @@ with tab8:
         # Ile % zamówień wpada w danym miesiącu przed eventem
         zam_jes_timing = zam_jes.copy()
         zam_jes_timing["data_utw_dt"] = pd.to_datetime(zam_jes_timing["data_utw"], errors="coerce")
+        # Drop miasto z zamówień (pochodzi z db.py JOIN) żeby uniknąć duplikatu
+        if "miasto" in zam_jes_timing.columns:
+            zam_jes_timing = zam_jes_timing.drop(columns=["miasto"])
         zam_jes_timing = zam_jes_timing.merge(
             ev_jesien[["id", "data_dt", "miasto", "rok_n"]].rename(columns={"id": "ev_id", "data_dt": "data_eventu"}),
             left_on="idtargi_n", right_on="ev_id", how="left"
