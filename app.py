@@ -1217,6 +1217,207 @@ with tab8:
             fig.update_layout(xaxis_title="Rok", yaxis_title="Zamówień")
             st.plotly_chart(fig, use_container_width=True)
 
+        # ── PROGNOZA SPRZEDAŻY ──────────────────────────────────────
+        st.divider()
+        st.subheader("Prognoza sprzedaży — jesień 2026")
+        st.caption("Na podstawie historycznego rozkładu zamówień wg miesięcy przed eventem")
+
+        # Oblicz historyczny wzorzec sprzedaży per miasto
+        # Ile % zamówień wpada w danym miesiącu przed eventem
+        zam_jes_timing = zam_jes.copy()
+        zam_jes_timing["data_utw_dt"] = pd.to_datetime(zam_jes_timing["data_utw"], errors="coerce")
+        zam_jes_timing = zam_jes_timing.merge(
+            ev_jesien[["id", "data_dt", "miasto", "rok_n"]].rename(columns={"id": "ev_id", "data_dt": "data_eventu"}),
+            left_on="idtargi_n", right_on="ev_id", how="left"
+        )
+        zam_jes_timing["dni_przed"] = (zam_jes_timing["data_eventu"] - zam_jes_timing["data_utw_dt"]).dt.days
+        zam_jes_timing["mies_przed"] = (zam_jes_timing["dni_przed"] / 30.44).round(0).astype(int)
+
+        # Historyczne wzorce (tylko lata < 2026)
+        hist_timing = zam_jes_timing[zam_jes_timing["rok_n"] < 2026]
+        # Aktualne 2026
+        cur_timing = zam_jes_timing[zam_jes_timing["rok_n"] == 2026]
+
+        # Per miasto: rozkład % zamówień per miesiąc przed eventem
+        prognoza_rows = []
+        for _, ev26 in jes_2026.iterrows():
+            miasto = ev26["miasto"]
+            ev_data = pd.to_datetime(ev26["data"])
+            ev_id = int(ev26["id"])
+
+            # Historia tego miasta
+            h = hist_timing[hist_timing["miasto"] == miasto]
+            if len(h) == 0:
+                continue
+
+            # Rozkład historyczny
+            h_total_per_ev = h.groupby("ev_id")["id"].count().mean()  # śr. zamówień per event
+            h_dist = h.groupby("mies_przed")["id"].count()
+            h_dist_pct = (h_dist / h_dist.sum()).to_dict()
+
+            # Zeszły rok — ten sam event
+            hist_same = jes_hist[jes_hist["miasto"] == miasto]
+            last_year = hist_same[hist_same["rok"] == hist_same["rok"].max()]
+            last_year_zam = last_year["zamowien"].sum() if len(last_year) > 0 else h_total_per_ev
+
+            # Cel 100% wzrostu
+            cel_100pct = int(last_year_zam * 2)
+
+            # Aktualne zamówienia 2026
+            cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
+            aktualnie = len(cur_ev)
+
+            # Ile miesięcy do eventu
+            dni_do = (ev_data - pd.Timestamp.now()).days
+            mies_do = max(0, round(dni_do / 30.44))
+
+            # Prognoza: ile jeszcze wpłynie na podstawie historycznego wzorca
+            # % zamówień które historycznie wpływały w pozostałych miesiącach
+            pct_pozostale = sum(v for k, v in h_dist_pct.items() if k <= mies_do)
+            pct_juz = 1 - pct_pozostale
+            if pct_juz > 0:
+                prognoza_total = round(aktualnie / pct_juz)
+            else:
+                prognoza_total = round(h_total_per_ev)
+
+            prognoza_rows.append({
+                "Event": ev26["symbol"],
+                "Miasto": miasto,
+                "Data eventu": ev_data.strftime("%Y-%m-%d"),
+                "Dni do eventu": dni_do,
+                "Zeszły rok": int(last_year_zam),
+                "Cel (2x)": cel_100pct,
+                "Aktualnie": aktualnie,
+                "% hist. wzorca": round(pct_juz * 100, 1),
+                "Prognoza końcowa": prognoza_total,
+                "Brakuje do celu": max(0, cel_100pct - aktualnie),
+                "Prognoza vs cel": round(prognoza_total / cel_100pct * 100, 1) if cel_100pct > 0 else 0,
+            })
+
+        if prognoza_rows:
+            prog_df = pd.DataFrame(prognoza_rows)
+
+            # Tabela prognoz
+            st.dataframe(
+                prog_df.style.format({
+                    "% hist. wzorca": "{:.1f}%",
+                    "Prognoza vs cel": "{:.1f}%",
+                }).apply(lambda x: [
+                    "background-color: #d4edda" if v >= 80 else
+                    "background-color: #fff3cd" if v >= 50 else
+                    "background-color: #f8d7da"
+                    for v in x
+                ] if x.name == "Prognoza vs cel" else [""] * len(x), axis=0),
+                use_container_width=True, hide_index=True,
+            )
+
+            # Wykres: aktualnie vs cel vs prognoza
+            st.subheader("Aktualny stan vs cel (2x zeszły rok)")
+            prog_chart = prog_df[["Event", "Aktualnie", "Cel (2x)", "Prognoza końcowa"]].melt(
+                id_vars="Event", var_name="Typ", value_name="Zamówień"
+            )
+            fig = px.bar(prog_chart, x="Event", y="Zamówień", color="Typ",
+                         barmode="group",
+                         color_discrete_map={
+                             "Aktualnie": COLORS[2],
+                             "Cel (2x)": COLORS[1],
+                             "Prognoza końcowa": COLORS[4],
+                         },
+                         text="Zamówień")
+            fig.update_traces(textposition="outside", textfont_size=10)
+            fig.update_layout(legend_title="", xaxis_title="")
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Wykres: historyczny rozkład zamówień wg miesięcy przed eventem
+            st.subheader("Kiedy wpływają zamówienia? (historyczny wzorzec)")
+            hist_dist_all = hist_timing.groupby("mies_przed")["id"].count().reset_index(name="zamowien")
+            hist_dist_all["pct"] = (hist_dist_all["zamowien"] / hist_dist_all["zamowien"].sum() * 100).round(1)
+            hist_dist_all["pct_kum"] = hist_dist_all["pct"].cumsum().round(1)
+            hist_dist_all = hist_dist_all.sort_values("mies_przed", ascending=False)
+            hist_dist_all["label"] = hist_dist_all["mies_przed"].apply(
+                lambda x: f"{x} mies. przed" if x >= 0 else f"{abs(x)} mies. po"
+            )
+
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                fig = px.bar(hist_dist_all, x="label", y="pct",
+                             title="% zamówień per miesiąc przed eventem",
+                             color_discrete_sequence=[COLORS[0]], text="pct")
+                fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+                fig.update_layout(xaxis_title="", yaxis_title="% zamówień")
+                st.plotly_chart(fig, use_container_width=True)
+
+            with col_p2:
+                hist_dist_kum = hist_dist_all.sort_values("mies_przed", ascending=True)
+                fig = px.line(hist_dist_kum, x="label", y="pct_kum",
+                              title="Skumulowany % zamówień (od najwcześniejszych)",
+                              color_discrete_sequence=[COLORS[2]], markers=True, text="pct_kum")
+                fig.update_traces(texttemplate="%{text:.1f}%", textposition="top center")
+                fig.update_layout(xaxis_title="", yaxis_title="% skumulowany")
+                st.plotly_chart(fig, use_container_width=True)
+
+            # Per miasto — plan miesięczny
+            st.subheader("Plan sprzedaży miesięczny per event")
+            for _, ev26 in jes_2026.iterrows():
+                miasto = ev26["miasto"]
+                ev_data = pd.to_datetime(ev26["data"])
+                ev_id = int(ev26["id"])
+
+                h = hist_timing[hist_timing["miasto"] == miasto]
+                if len(h) == 0:
+                    continue
+
+                # Cel z prog_df
+                prog_row = prog_df[prog_df["Event"] == ev26["symbol"]].iloc[0]
+                cel = prog_row["Cel (2x)"]
+
+                # Rozkład historyczny per miesiąc
+                h_dist = h.groupby("mies_przed")["id"].count()
+                h_dist_pct = (h_dist / h_dist.sum())
+
+                # Plan per miesiąc kalendarzowy
+                plan_rows = []
+                for mp in sorted(h_dist_pct.index, reverse=True):
+                    mies_data = ev_data - pd.DateOffset(months=mp)
+                    plan_zam = round(cel * h_dist_pct.get(mp, 0))
+                    plan_rows.append({
+                        "Miesiąc": mies_data.strftime("%Y-%m"),
+                        "Mies. przed": mp,
+                        "% hist.": round(h_dist_pct.get(mp, 0) * 100, 1),
+                        "Plan zamówień": plan_zam,
+                    })
+
+                plan_df = pd.DataFrame(plan_rows)
+                plan_df["Plan kumulat."] = plan_df["Plan zamówień"].cumsum()
+
+                with st.expander(f"{ev26['symbol']} — {miasto} ({ev_data.strftime('%Y-%m-%d')}) | Cel: {cel} zamówień"):
+                    col_plan1, col_plan2 = st.columns([1, 2])
+                    with col_plan1:
+                        st.dataframe(plan_df.style.format({
+                            "% hist.": "{:.1f}%",
+                        }), hide_index=True, use_container_width=True)
+                    with col_plan2:
+                        fig = go.Figure()
+                        fig.add_trace(go.Bar(
+                            x=plan_df["Miesiąc"], y=plan_df["Plan zamówień"],
+                            name="Plan miesięczny", marker_color=COLORS[0],
+                            text=plan_df["Plan zamówień"], textposition="outside",
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=plan_df["Miesiąc"], y=plan_df["Plan kumulat."],
+                            name="Kumulatywnie", mode="lines+markers+text",
+                            line=dict(color=COLORS[2], width=2),
+                            text=plan_df["Plan kumulat."], textposition="top center",
+                        ))
+                        fig.add_hline(y=cel, line_dash="dash", line_color="red",
+                                      annotation_text=f"Cel: {cel}")
+                        fig.update_layout(
+                            title=f"Plan sprzedaży — {ev26['symbol']}",
+                            xaxis_title="", yaxis_title="Zamówienia",
+                            legend=dict(orientation="h", y=-0.2),
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # TAB 7 — Analizy i wnioski
