@@ -1042,10 +1042,20 @@ with tab8:
 
             pct_pozostale = sum(v for k, v in h_dist_pct.items() if k <= mies_do)
             pct_juz = 1 - pct_pozostale
-            if pct_juz > 0:
+
+            # Prognoza ważona: mieszanka ekstrapolacji i średniej historycznej
+            # Waga ekstrapolacji rośnie w miarę jak pct_juz rośnie (bliżej eventu = więcej danych)
+            prog_hist = round(h_total_per_ev)
+            if pct_juz >= 0.15:
+                # Wystarczająco dużo danych — ekstrapolacja dominuje
                 prognoza_total = round(aktualnie / pct_juz)
+            elif pct_juz > 0 and aktualnie > 0:
+                # Wczesny etap — ważona mieszanka
+                waga_extrap = pct_juz / 0.15  # 0..1
+                prog_extrap = aktualnie / pct_juz
+                prognoza_total = round(waga_extrap * prog_extrap + (1 - waga_extrap) * prog_hist)
             else:
-                prognoza_total = round(h_total_per_ev)
+                prognoza_total = prog_hist
 
             prognoza_rows.append({
                 "Event": ev26["symbol"],
