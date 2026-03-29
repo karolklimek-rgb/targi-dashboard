@@ -1043,20 +1043,11 @@ with tab8:
             pct_pozostale = sum(v for k, v in h_dist_pct.items() if k <= mies_do)
             pct_juz = 1 - pct_pozostale
 
-            # Prognoza: ekstrapolacja na podstawie historycznego tempa
-            # Ile zamówień historycznie wpływało do tego momentu (pct_juz)?
-            # Prognoza = aktualnie / pct_juz (ile będzie na koniec jeśli tempo się utrzyma)
+            # Prognoza: aktualnie sprzedane + oczekiwana reszta (z historii)
+            # Im bliżej eventu (pct_juz rośnie), tym mniejsza "reszta" historyczna
+            # Im dalej od eventu, tym prognoza bliższa średniej hist. + aktualne zamówienia
             prog_hist = round(h_total_per_ev)
-            if pct_juz >= 0.05:
-                prognoza_total = round(aktualnie / pct_juz)
-            elif aktualnie > 0:
-                # Za wcześnie na ekstrapolację — użyj proporcji do średniej hist.
-                # Ile powinno być na tym etapie historycznie?
-                oczekiwane_teraz = max(1, round(h_total_per_ev * pct_juz)) if pct_juz > 0 else 1
-                # Stosunek aktualnych do oczekiwanych × średnia = prognoza
-                prognoza_total = max(aktualnie, round(prog_hist * aktualnie / oczekiwane_teraz))
-            else:
-                prognoza_total = prog_hist
+            prognoza_total = max(aktualnie, round(aktualnie + (1 - pct_juz) * h_total_per_ev))
 
             prognoza_rows.append({
                 "Event": ev26["symbol"],
