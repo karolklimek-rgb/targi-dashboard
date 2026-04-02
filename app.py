@@ -1031,6 +1031,7 @@ with tab8:
                 "Gdańsk": 52,
                 "Gliwice": 28,
                 "Białystok": 34,
+                "Poznań": 38,
             }
             cel_100pct = cele_reczne.get(miasto, int(last_year_zam * 2))
 
