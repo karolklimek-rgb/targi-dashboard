@@ -1198,8 +1198,13 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
                 cur_per_mies = cur_ev.groupby("mies_przed")["id"].count().to_dict()
                 aktualnie_total = len(cur_ev)
 
+                # Zakres miesięcy: od najwcześniejszego z historii LUB z aktualnych zamówień, do 0
+                all_mies_przed = set(h_dist_pct.index) | set(cur_per_mies.keys())
+                # Pomijamy ujemne (po evencie) i ograniczamy do max sensownego zakresu
+                mies_range = sorted([m for m in all_mies_przed if m >= 0], reverse=True)
+
                 plan_rows = []
-                for mp in sorted(h_dist_pct.index, reverse=True):
+                for mp in mies_range:
                     mies_data = ev_data - pd.DateOffset(months=mp)
                     plan_zam = round(cel * h_dist_pct.get(mp, 0))
                     realizacja = cur_per_mies.get(mp, 0)
