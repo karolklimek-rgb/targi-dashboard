@@ -64,9 +64,14 @@ def load_zamowienia() -> pd.DataFrame:
 
 @st.cache_data(ttl=300)
 def load_klienci() -> pd.DataFrame:
+    # t_<miasto> = flaga rejestracji zainteresowania danym miastem (atrybucja leada),
+    # telefon = kontakt do list sprzedażowych.
     return query("""
-        SELECT id, nazwa, branza, miasto, email, akt, time_utw,
-               rejestracja50, pierwszezamowienie
+        SELECT id, nazwa, branza, miasto, email, telefon, akt, time_utw,
+               rejestracja50, pierwszezamowienie,
+               t_krakow, t_warszawa, t_gdansk, t_rzeszow, t_poznan, t_bialystok,
+               t_gliwice, t_lublin, t_katowice, t_nowysacz, t_slupsk,
+               t_walbrzych, t_ostroda
         FROM klienci
     """)
 
@@ -78,15 +83,6 @@ def load_platnosci() -> pd.DataFrame:
                p.status, p.data_wym, p.data_ksiegowania,
                p.data_wystawienia_fv
         FROM platnosci p
-    """)
-
-
-@st.cache_data(ttl=300)
-def load_leads() -> pd.DataFrame:
-    return query("""
-        SELECT id, nazwa, email, telefon, data_utw, makontoklienta, kolor,
-               i_stoisko, i_ekspozycja, i_wystep, i_pokaz, i_prowadzenie, i_reklama
-        FROM leads
     """)
 
 

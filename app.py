@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime
+from pathlib import Path
 import numpy as np
 from scipy import stats
 
@@ -15,7 +16,7 @@ st.set_page_config(
 
 from db import (
     load_events, load_bilety, load_zamowienia, load_klienci,
-    load_platnosci, load_leads, load_branze, load_wyjscia,
+    load_platnosci, load_branze, load_wyjscia,
     load_rabaty, load_uslugi_zamowione, load_places,
 )
 
@@ -46,6 +47,18 @@ CITY_COL_MAP = {
     'Olsztyn': 't_ostroda',
 }
 
+# Cele sprzedażowe stoisk — jesień 2026 (liczba zamówień per miasto).
+# Single source of truth: używane przez Cockpit sprzedażowy i TAB 8 (prognoza).
+CELE_JESIEN_2026 = {
+    "Rzeszów": 30,
+    "Kraków": 45,
+    "Gdańsk": 52,
+    "Gliwice": 28,
+    "Białystok": 34,
+    "Poznań": 38,
+    "Warszawa": 35,
+}
+
 # ── sidebar ──────────────────────────────────────────────────
 
 st.sidebar.title("Targi Młodej Pary")
@@ -61,7 +74,6 @@ with st.spinner("Ładowanie danych z bazy..."):
     zamowienia = load_zamowienia()
     klienci = load_klienci()
     platnosci = load_platnosci()
-    leads = load_leads()
     branze = load_branze()
     wyjscia = load_wyjscia()
     rabaty = load_rabaty()
@@ -90,6 +102,14 @@ zamowienia["rok_targi"] = extract_year(zamowienia["data_targi"])
 platnosci["kwota_netto_n"] = safe_numeric(platnosci["kwota_netto"])
 platnosci["data_wym_dt"] = pd.to_datetime(platnosci["data_wym"], errors="coerce")
 platnosci["data_ksieg_dt"] = pd.to_datetime(platnosci["data_ksiegowania"], errors="coerce")
+
+# ── Leady = konta klientów BEZ stoiska (rejestracja bez aktywnego zamówienia) ──
+# Realna definicja leada wg firmy. Stara tabela `leads` (2017–2022) usunięta jako martwa.
+_klienci_ze_stoiskiem = set(
+    zamowienia[zamowienia["status"].astype(str) == "2"]["idklienta"].astype(str)
+)
+klienci["ma_stoisko"] = klienci["id"].astype(str).isin(_klienci_ze_stoiskiem)
+klienci["mies_od_rej"] = (pd.Timestamp.now() - klienci["time_utw_dt"]).dt.days / 30.44
 
 uslugi["cena_netto_n"] = safe_numeric(uslugi["cena_netto"])
 places["powierzchnia_n"] = safe_numeric(places["powierzchnia"])
@@ -130,14 +150,17 @@ bil_wejscia = bil_f[bil_f["ts_wejscie"].notna() & (bil_f["ts_wejscie"] != "")]
 
 # ── TABS ─────────────────────────────────────────────────────
 
-tab8, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab_cockpit, tab_strat, tab_leady, tab8, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "🎯 Cockpit sprzedażowy",
+    "📋 Strategia",
+    "💼 Leady / Pipeline",
     "Targi jesień 2026",
     "Przegląd ogólny",
     "Eventy i miasta",
     "Bilety",
     "Wystawcy i zamówienia",
     "Przychody i płatności",
-    "Leady i rabaty",
+    "Rabaty",
     "Analizy i wnioski",
 ])
 
@@ -809,53 +832,16 @@ with tab5:
 # TAB 6 — Leady i rabaty
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 with tab6:
-    st.header("Leady i rabaty")
+    st.header("Rabaty")
 
-    col_l, col_r = st.columns(2)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Kodów rabatowych", len(rabaty))
+    c2.metric("Łączne użycia", int(rabaty["uzycia"].sum()))
+    c3.metric("Wartość rabatów", format_pln(rabaty["suma_rabatu"].sum()))
 
-    with col_l:
-        st.subheader("Leady")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Łącznie leadów", len(leads))
-        converted = leads[leads["makontoklienta"] == 1].shape[0]
-        c2.metric("Skonwertowane", converted)
-        c3.metric("Konwersja", f"{converted / max(len(leads), 1) * 100:.1f}%")
+    col_a, col_b = st.columns(2)
 
-        interest = pd.DataFrame({
-            "Typ usługi": ["Stoisko", "Ekspozycja", "Występ", "Pokaz", "Prowadzenie", "Reklama"],
-            "Zainteresowanych": [
-                leads["i_stoisko"].sum(),
-                leads["i_ekspozycja"].sum(),
-                leads["i_wystep"].sum(),
-                leads["i_pokaz"].sum(),
-                leads["i_prowadzenie"].sum(),
-                leads["i_reklama"].sum(),
-            ]
-        })
-        fig = px.bar(interest, x="Zainteresowanych", y="Typ usługi", orientation="h",
-                     title="Leady — zainteresowanie typem usługi",
-                     color_discrete_sequence=COLORS, text="Zainteresowanych")
-        fig.update_layout(yaxis_title="")
-        st.plotly_chart(fig, use_container_width=True)
-
-        leads_copy = leads.copy()
-        leads_copy["data_utw_dt"] = pd.to_datetime(leads_copy["data_utw"], errors="coerce")
-        leads_copy["miesiac"] = leads_copy["data_utw_dt"].dt.to_period("M").astype(str)
-        leads_m = leads_copy.groupby("miesiac").size().reset_index(name="ile")
-        leads_m = leads_m.sort_values("miesiac").tail(24)
-        fig = px.line(leads_m, x="miesiac", y="ile",
-                      title="Nowe leady miesięcznie",
-                      color_discrete_sequence=COLORS)
-        fig.update_layout(xaxis_title="Miesiąc", yaxis_title="Leady")
-        st.plotly_chart(fig, use_container_width=True)
-
-    with col_r:
-        st.subheader("Rabaty")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Kodów rabatowych", len(rabaty))
-        c2.metric("Łączne użycia", int(rabaty["uzycia"].sum()))
-        c3.metric("Wartość rabatów", format_pln(rabaty["suma_rabatu"].sum()))
-
+    with col_a:
         rabaty_top = rabaty[rabaty["uzycia"] > 0].sort_values("uzycia", ascending=True)
         fig = px.bar(rabaty_top, x="uzycia", y="kod", orientation="h",
                      title="Kody rabatowe — liczba użyć",
@@ -863,6 +849,7 @@ with tab6:
         fig.update_layout(yaxis_title="Kod", xaxis_title="Użycia")
         st.plotly_chart(fig, use_container_width=True)
 
+    with col_b:
         rabaty_val = rabaty[rabaty["suma_rabatu"] > 0].sort_values("suma_rabatu", ascending=True)
         fig = px.bar(rabaty_val, x="suma_rabatu", y="kod", orientation="h",
                      title="Kody rabatowe — wartość rabatów",
@@ -1024,16 +1011,8 @@ with tab8:
             last_year = hist_same[hist_same["rok"] == hist_same["rok"].max()]
             last_year_zam = last_year["zamowien"].sum() if len(last_year) > 0 else h_total_per_ev
 
-            # Ręczne cele sprzedażowe per miasto
-            cele_reczne = {
-                "Rzeszów": 30,
-                "Kraków": 45,
-                "Gdańsk": 52,
-                "Gliwice": 28,
-                "Białystok": 34,
-                "Poznań": 38,
-            }
-            cel_100pct = cele_reczne.get(miasto, int(last_year_zam * 2))
+            # Ręczne cele sprzedażowe per miasto (stała globalna — patrz góra pliku)
+            cel_100pct = CELE_JESIEN_2026.get(miasto, int(last_year_zam * 2))
 
             cur_ev = cur_timing[cur_timing["ev_id"] == ev_id]
             aktualnie = len(cur_ev)
@@ -1132,7 +1111,7 @@ Np. "3 mies. przed = 62.1%" oznacza, że na 3 miesiące przed targami mamy dopie
 - Na miesiąc przed targami brakuje jeszcze ~15-20% zamówień
 - Zamówienia wpływają nawet w miesiącu eventu (~8%)
 
-**Jak to wykorzystać:** Jeśli na 3 mies. przed eventem masz mniej niż 62% celu — czas zintensyfikować działania sprzedażowe. Jeśli masz więcej — jesteś powyżej normy.
+**Jak to wykorzystać:** Jeśli na 3 mies. przed eventem mamy mniej niż 62% celu — zintensyfikujmy działania sprzedażowe. Jeśli mamy więcej — jesteśmy powyżej normy.
 """)
             hist_dist_all = hist_timing.groupby("mies_przed")["id"].count().reset_index(name="zamowien")
             hist_dist_all["pct"] = (hist_dist_all["zamowien"] / hist_dist_all["zamowien"].sum() * 100).round(1)
@@ -2010,6 +1989,686 @@ with tab7:
 
     for i, w in enumerate(wnioski, 1):
         st.success(f"**{i}.** {w}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# COCKPIT SPRZEDAŻOWY — operacjonalizacja strategii jesień 2026
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab_cockpit:
+    st.header("🎯 Cockpit sprzedażowy — jesień 2026")
+    st.caption(
+        "Operacyjny widok dowiezienia celów. Status liczony **względem historycznej krzywej sprzedaży** "
+        "(gdzie powinniśmy być dziś), a nie surowego % celu. Pełna metodyka i plan: **STRATEGIA_SPRZEDAZY_2026.md**"
+    )
+
+    # ── Dane bazowe (niezależne od filtrów sidebara) ──
+    ev_c = events.copy()
+    ev_c["mies_n"] = ev_c["data_dt"].dt.month
+    ev_c["rok_n"] = ev_c["data_dt"].dt.year
+    ev26_c = ev_c[(ev_c["rok_n"] == 2026) & (ev_c["mies_n"].isin([10, 11, 12]))].copy()
+
+    zam_c = zamowienia[zamowienia["status"].astype(str) == "2"].copy()
+    zam_c["idtargi_n"] = pd.to_numeric(zam_c["idtargi"], errors="coerce")
+    zam_c = zam_c.drop(columns=[c for c in ["miasto", "data_targi"] if c in zam_c.columns])
+    zam_c = zam_c.merge(
+        ev_c[["id", "miasto", "data_dt", "mies_n", "rok_n"]].rename(columns={"id": "ev_id_join"}),
+        left_on="idtargi_n", right_on="ev_id_join", how="left",
+    )
+
+    if ev26_c.empty:
+        st.info("Brak eventów jesiennych 2026 w bazie — cockpit uruchomi się, gdy pojawią się edycje X–XII 2026.")
+    else:
+        # ── Historyczna krzywa sprzedaży (jesień 2022–2025, wszystkie miasta docelowe) ──
+        zam_aut = zam_c[zam_c["mies_n"].isin([10, 11, 12])].copy()
+        zam_aut["dni_przed"] = (zam_aut["data_dt"] - zam_aut["data_utw_dt"]).dt.days
+        zam_aut["mies_przed"] = (zam_aut["dni_przed"] / 30.44).round(0)
+        # Pełna historia jesienna — definiuje przynależność „był wystawcą" (pula reaktywacji)
+        pool_hist = zam_aut[(zam_aut["rok_n"] >= 2022) & (zam_aut["rok_n"] < 2026)]
+        # Wersja odfiltrowana do KRZYWEJ czasowej (potrzebuje sensownego mies_przed)
+        hist_aut = pool_hist[(pool_hist["mies_przed"].notna()) & (pool_hist["mies_przed"] >= 0)]
+        curve = hist_aut.groupby("mies_przed")["id"].count()
+        curve_pct = (curve / curve.sum()).to_dict() if curve.sum() > 0 else {}
+
+        def pct_juz_dla(mies_do):
+            """Jaki % zamówień historycznie już wpłynął, gdy jesteśmy `mies_do` mies. przed eventem."""
+            return sum(v for k, v in curve_pct.items() if k > mies_do)
+
+        now = pd.Timestamp.now()
+        rows = []
+        for _, e in ev26_c.iterrows():
+            eid = int(e["id"]); miasto = e["miasto"]; edate = e["data_dt"]
+            akt = zam_c[zam_c["idtargi_n"] == eid]
+            aktualnie = len(akt)
+            przychod = akt["kwota_netto_n"].sum()
+            cel = CELE_JESIEN_2026.get(miasto, 0)
+
+            dni_do = (edate - now).days
+            mies_do = max(0, dni_do / 30.44)
+            pct_juz = pct_juz_dla(mies_do)
+            oczek = cel * pct_juz
+
+            # Status względem krzywej
+            if cel <= 0:
+                status, sev = "— brak celu", 5
+            elif oczek < 1.5:
+                status, sev = "⏳ start sezonu", 3
+            else:
+                ratio = aktualnie / oczek if oczek > 0 else 0
+                if ratio >= 1.0:
+                    status, sev = "🟢 powyżej krzywej", 0
+                elif ratio >= 0.7:
+                    status, sev = "🟡 lekko pod krzywą", 1
+                else:
+                    status, sev = "🔴 pod krzywą — eskalujmy", 2
+
+            # Pula reaktywacji: byli wystawcy jesienni tego miasta bez zam. na 2026
+            past = pool_hist[pool_hist["miasto"] == miasto]
+            past_clients = set(past["idklienta"].dropna())
+            cur_clients = set(akt["idklienta"].dropna())
+            pula_reak = len(past_clients - cur_clients)
+
+            weeks = max(1, dni_do / 7)
+            brakuje = max(0, cel - aktualnie)
+            tempo_tydz = brakuje / weeks
+
+            rows.append({
+                "Event": e["symbol"], "Miasto": miasto,
+                "Data": edate.strftime("%Y-%m-%d"), "Dni do": dni_do,
+                "Aktualnie": aktualnie, "Cel": cel,
+                "Oczek. wg krzywej": round(oczek),
+                "Status": status, "_sev": sev,
+                "Brakuje": brakuje,
+                "Tempo/tydz": round(tempo_tydz, 1),
+                "Pula reaktywacji": pula_reak,
+                "Przychód": przychod,
+                "_dni": dni_do,
+            })
+
+        cdf = pd.DataFrame(rows)
+
+        # ── KPI nagłówek (tylko miasta z celem — spójnie z celem łącznym) ──
+        cel_cities = cdf[cdf["Cel"] > 0]
+        tot_akt = int(cel_cities["Aktualnie"].sum())
+        tot_cel = int(cel_cities["Cel"].sum())
+        tot_brak = int(cel_cities["Brakuje"].sum())
+        n_pod = int((cdf["_sev"] == 2).sum())
+        tot_reak = int(cel_cities["Pula reaktywacji"].sum())
+
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric(f"Zamówienia ({len(cel_cities)} miast)", tot_akt)
+        k2.metric("Cel łączny", tot_cel)
+        k3.metric("Brakuje do celu", tot_brak, delta=f"-{tot_brak}", delta_color="inverse")
+        k4.metric("Eventy pod krzywą", n_pod, delta="eskalujmy" if n_pod else "ok",
+                  delta_color="inverse" if n_pod else "normal")
+        k5.metric("Pula reaktywacji", tot_reak, help="Byli wystawcy jesienni bez zamówienia na 2026")
+
+        st.divider()
+
+        # ── Tabela statusu per event ──
+        st.subheader("Status per event — gdzie jesteśmy vs gdzie powinniśmy być")
+        cdf_show = cdf.sort_values(["_sev", "_dni"], ascending=[False, True]).drop(columns=["_sev", "_dni"])
+
+        def koloruj_status(val):
+            if "🔴" in str(val):
+                return "background-color: #f8d7da"
+            if "🟡" in str(val):
+                return "background-color: #fff3cd"
+            if "🟢" in str(val):
+                return "background-color: #d4edda"
+            return ""
+
+        st.dataframe(
+            cdf_show.style
+                .format({"Przychód": "{:,.0f} zł", "Tempo/tydz": "{:.1f}"})
+                .map(koloruj_status, subset=["Status"]),
+            use_container_width=True, hide_index=True,
+        )
+        with st.expander("Jak czytać status?"):
+            st.markdown("""
+- **Oczek. wg krzywej** — ile zamówień *powinniśmy* już mieć dziś, gdyby ten event szedł dokładnie wg historycznego tempa (krzywa jesień 2022–2025).
+- **Status** liczony jako `Aktualnie / Oczek. wg krzywej`:
+  - 🟢 **powyżej krzywej** (≥100%) — idzie lepiej niż historycznie
+  - 🟡 **lekko pod** (70–99%) — obserwujmy
+  - 🔴 **pod krzywą** (<70%) — eskalujmy: dodajmy turę reaktywacji + kampanię
+  - ⏳ **start sezonu** — za wcześnie na wiarygodną ocenę (event daleko, historycznie prawie nic jeszcze nie wpływało)
+- **Tempo/tydz** — ile zamówień/tydzień musimy pozyskać do dnia eventu, żeby dobić cel.
+- **Pula reaktywacji** — ilu byłych wystawców jesiennych tego miasta jeszcze nie zamówiło na 2026 (gotowa ciepła lista).
+""")
+
+        # ── Wykres: aktualnie vs oczekiwane vs cel ──
+        st.subheader("Aktualnie vs oczekiwane wg krzywej vs cel")
+        chart_df = cdf.sort_values("_dni")[["Event", "Aktualnie", "Oczek. wg krzywej", "Cel"]].melt(
+            id_vars="Event", var_name="Miara", value_name="Zamówień")
+        fig = px.bar(chart_df, x="Event", y="Zamówień", color="Miara", barmode="group",
+                     color_discrete_map={
+                         "Aktualnie": COLORS[2],
+                         "Oczek. wg krzywej": COLORS[0],
+                         "Cel": COLORS[1],
+                     }, text="Zamówień")
+        fig.update_traces(textposition="outside", textfont_size=10)
+        fig.update_layout(legend_title="", xaxis_title="")
+        st.plotly_chart(fig, use_container_width=True)
+
+        # ── Lista priorytetowa działań ──
+        st.subheader("Priorytety na ten tydzień")
+        prio = cdf.sort_values(["_sev", "_dni"], ascending=[False, True]).to_dict("records")
+        ramki = {2: ("🔴", st.error), 1: ("🟡", st.warning), 3: ("⏳", st.info)}
+        for r in prio:
+            ikona, ramka = ramki.get(r["_sev"], ("🟢", st.success))
+            ramka(
+                f"**{ikona} {r['Miasto']}** ({r['Data']}, za {r['_dni']} dni) — "
+                f"{r['Aktualnie']}/{r['Cel']} zam. (oczek. dziś ~{r['Oczek. wg krzywej']}). "
+                f"Brakuje **{r['Brakuje']}**, tempo **{r['Tempo/tydz']}/tydz**. "
+                f"Ciepła pula reaktywacji: **{r['Pula reaktywacji']}** wystawców."
+            )
+
+        st.caption(
+            "Pełny plan działań (reaktywacja VIP-ów, mailing do byłych wystawców, early-bird, polityka cenowa) "
+            "— w dokumencie **STRATEGIA_SPRZEDAZY_2026.md**."
+        )
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# STRATEGIA — operacyjna wersja STRATEGIA_SPRZEDAZY_2026.md
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab_strat:
+    st.header("📋 Strategia sprzedaży stoisk — jesień 2026")
+    st.caption(
+        "Operacyjna wersja dokumentu **STRATEGIA_SPRZEDAZY_2026.md** — z **listami do działania na żywo z bazy**. "
+        "Status i tempo per event: zakładka **Cockpit sprzedażowy**."
+    )
+
+    # ── Dane bazowe (niezależne od filtrów sidebara) ──
+    ev_s = events.copy()
+    ev_s["mies_s"] = ev_s["data_dt"].dt.month
+    ev_s["rok_s"] = ev_s["data_dt"].dt.year
+
+    zam_s = zamowienia[zamowienia["status"].astype(str) == "2"].copy()
+    zam_s["idtargi_n"] = pd.to_numeric(zam_s["idtargi"], errors="coerce")
+    zam_s = zam_s.drop(columns=[c for c in ["miasto", "data_targi"] if c in zam_s.columns])
+    zam_s = zam_s.merge(
+        ev_s[["id", "miasto", "data_dt", "mies_s", "rok_s"]].rename(columns={"id": "ev_join"}),
+        left_on="idtargi_n", right_on="ev_join", how="left",
+    )
+
+    # Widok do analiz klienckich — bez pustych idklienta (czyste listy bez „nan")
+    zam_cli = zam_s[zam_s["idklienta"].notna()].copy()
+    zam_cli["idklienta_s"] = zam_cli["idklienta"].astype(str)
+    zam_cli = zam_cli[~zam_cli["idklienta_s"].str.lower().isin(["nan", "none", ""])]
+
+    kli = klienci.copy()
+    kli["id_s"] = kli["id"].astype(str)
+    kli_info = kli[["id_s", "nazwa", "email", "miasto"]].rename(columns={"miasto": "miasto_klienta"})
+
+    cur26_ids = set(zam_cli[zam_cli["rok_s"] == 2026]["idklienta_s"])
+    kev = zam_cli.groupby("idklienta_s").agg(
+        ile_edycji=("idtargi_n", "nunique"),
+        przychod_zycia=("kwota_netto_n", "sum"),
+    ).reset_index()
+
+    zam_aut_s = zam_cli[zam_cli["mies_s"].isin([10, 11, 12])]
+    hist_aut_s = zam_aut_s[(zam_aut_s["rok_s"] >= 2022) & (zam_aut_s["rok_s"] < 2026)]
+
+    CELE = CELE_JESIEN_2026
+
+    # Pule
+    vip_pool = kev[(kev["ile_edycji"] >= 6) & (~kev["idklienta_s"].isin(cur26_ids))]
+    stali_pool = kev[(kev["ile_edycji"] >= 3) & (~kev["idklienta_s"].isin(cur26_ids))]
+
+    # Leady = konta BEZ stoiska, świeże (ostatnie 18 mies.), z flagą miasta docelowego
+    LEAD_OKNO_MIES = 18
+    cele_cols = [CITY_COL_MAP[c] for c in CELE if c in CITY_COL_MAP]
+    leady_baza = klienci[
+        (~klienci["ma_stoisko"]) & klienci["time_utw_dt"].notna() &
+        (klienci["mies_od_rej"] <= LEAD_OKNO_MIES)
+    ].copy()
+    flag_target = pd.Series(False, index=leady_baza.index)
+    for _c in cele_cols:
+        if _c in leady_baza.columns:
+            flag_target = flag_target | (pd.to_numeric(leady_baza[_c], errors="coerce").fillna(0) > 0)
+    leady_target = leady_baza[flag_target]
+    n_leady = len(leady_target)
+    n_warm = int((leady_target["mies_od_rej"] <= 3).sum())  # ciepłe okno ≤3 mies.
+
+    reak_per_city = {}
+    for miasto in CELE:
+        past_ids = set(hist_aut_s[hist_aut_s["miasto"] == miasto]["idklienta_s"])
+        cur_ids = set(zam_aut_s[(zam_aut_s["miasto"] == miasto) & (zam_aut_s["rok_s"] == 2026)]["idklienta_s"])
+        reak_per_city[miasto] = past_ids - cur_ids
+    reak_total = sum(len(v) for v in reak_per_city.values())
+
+    ev26_target_ids = ev_s[
+        (ev_s["rok_s"] == 2026) & (ev_s["mies_s"].isin([10, 11, 12])) & (ev_s["miasto"].isin(CELE))
+    ]["id"].astype(int).tolist()
+    akt_jes = len(zam_s[zam_s["idtargi_n"].isin(ev26_target_ids)])
+    cel_total = sum(CELE.values())
+
+    # ── 1. Streszczenie wykonawcze (na żywo) ──
+    st.subheader("Streszczenie wykonawcze")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric(f"Zamówienia ({len(CELE)} miast)", akt_jes)
+    m2.metric("Cel łączny", cel_total)
+    m3.metric("Brakuje", max(0, cel_total - akt_jes), delta=f"-{max(0, cel_total - akt_jes)}", delta_color="inverse")
+    m4.metric("Pula reaktywacji", reak_total, help="Byli wystawcy jesienni bez zamówienia na 2026")
+    m5.metric("Leady (18 mies.)", n_leady, help="Konta bez stoiska, zarejestrowane w ostatnich 18 mies., z flagą miasta docelowego")
+    st.info(
+        f"Brakuje **{max(0, cel_total - akt_jes)} zamówień** do celu. Domykamy je z ciepłej bazy, nie z cold-callingu: "
+        f"**{reak_total} byłych wystawców** do reaktywacji (w tym **{len(vip_pool)} VIP-ów 6+** i **{len(stali_pool)} stałych 3+** "
+        f"bez zam. 2026) + **{n_leady} świeżych leadów** (konta bez stoiska, 18 mies.) w miastach docelowych."
+    )
+
+    # ── 2. Trzy dźwignie ──
+    st.subheader("Trzy dźwignie (wg ROI)")
+    d1, d2, d3 = st.columns(3)
+    with d1:
+        st.markdown(
+            f"#### A. Reaktywacja\n"
+            f"**{reak_total}** byłych wystawców + **{len(vip_pool)}** VIP-ów.\n\n"
+            f"Najtańsze i najpewniejsze źródło. Stały wystawca wart 4–15× więcej niż jednorazowy. "
+            f"VIP-y = **telefon imienny**, nie mailing. Lista niżej ⬇️"
+        )
+    with d2:
+        st.markdown(
+            f"#### B. Konwersja leadów\n"
+            f"**{n_leady}** świeżych leadów, w tym **{n_warm}** w 🔥 ciepłym oknie (≤3 mies.).\n\n"
+            f"**Reguła 72h:** świeży lead dotykamy w 3 dni — 55% kupuje w 1. miesiącu. "
+            f"Sekwencja: oferta → case study → social proof → early-bird. Pełny pipeline: zakładka **Leady**."
+        )
+    with d3:
+        st.markdown(
+            "#### C. Dyscyplina cenowa\n"
+            "**Nie podnośmy ceny m²** w miastach z luką.\n\n"
+            "Dane: podwyżki obniżają wolumen. Grajmy **early-bird** (zamrożona cena do terminu X) "
+            "i **pakietami**, nie wyższym cennikiem."
+        )
+
+    st.divider()
+
+    # ── 3. Listy do działania (eksport) ──
+    st.subheader("🎯 Listy do działania")
+    st.caption("Gotowe, ciepłe listy kontaktów. Każdą można pobrać jako CSV (Excel-friendly) i wrzucić do mailingu/CRM.")
+
+    lt1, lt2, lt3 = st.tabs([
+        f"⭐ VIP-y do reaktywacji ({len(vip_pool)})",
+        "🔁 Pula reaktywacji per miasto",
+        f"📨 Leady — konta bez stoiska ({n_leady})",
+    ])
+
+    with lt1:
+        st.markdown("**Wystawcy 6+ edycji bez zamówienia na 2026** — najwyższy priorytet, kontakt osobisty (telefon).")
+        vip_list = vip_pool.merge(kli_info, left_on="idklienta_s", right_on="id_s", how="left")
+        vip_list = vip_list[["nazwa", "email", "miasto_klienta", "ile_edycji", "przychod_zycia"]] \
+            .sort_values("przychod_zycia", ascending=False)
+        vip_list.columns = ["Wystawca", "E-mail", "Miasto", "Edycji łącznie", "Wartość życiowa (zł)"]
+        st.dataframe(
+            vip_list.style.format({"Wartość życiowa (zł)": "{:,.0f}"}),
+            use_container_width=True, hide_index=True,
+        )
+        st.download_button(
+            "⬇️ Pobierz listę VIP (CSV)",
+            vip_list.to_csv(index=False).encode("utf-8-sig"),
+            "reaktywacja_VIP_jesien2026.csv", "text/csv", key="dl_vip",
+        )
+
+    with lt2:
+        sel_city = st.selectbox("Miasto", list(CELE.keys()), key="reak_city")
+        pool_ids = reak_per_city[sel_city]
+        past_city = hist_aut_s[(hist_aut_s["miasto"] == sel_city) & (hist_aut_s["idklienta_s"].isin(pool_ids))]
+        if past_city.empty:
+            st.info("Brak puli reaktywacji dla tego miasta.")
+        else:
+            pool = past_city.groupby("idklienta_s").agg(
+                edycje_jesien=("idtargi_n", "nunique"),
+                ostatni_rok=("rok_s", "max"),
+                hist_wartosc=("kwota_netto_n", "sum"),
+            ).reset_index()
+            pool = pool.merge(kli_info, left_on="idklienta_s", right_on="id_s", how="left")
+            max_rok = pool["ostatni_rok"].max()
+            pool["priorytet"] = np.where(pool["ostatni_rok"] == max_rok, "🔥 z ost. edycji", "")
+            pool = pool.sort_values(["ostatni_rok", "hist_wartosc"], ascending=[False, False])
+            pool_show = pool[["nazwa", "email", "edycje_jesien", "ostatni_rok", "hist_wartosc", "priorytet"]].copy()
+            pool_show.columns = ["Wystawca", "E-mail", "Edycji jesień", "Ostatnia edycja", "Hist. wartość (zł)", "Priorytet"]
+            swiezi = int((pool["ostatni_rok"] == max_rok).sum())
+            st.caption(f"**{len(pool)}** wystawców do reaktywacji w mieście {sel_city}, "
+                       f"w tym **{swiezi}** z ostatniej edycji (najcieplejsi). "
+                       f"Potencjał: ~{pool['hist_wartosc'].sum() / 1000:.0f}k zł historycznej wartości.")
+            st.dataframe(
+                pool_show.style.format({"Hist. wartość (zł)": "{:,.0f}", "Ostatnia edycja": "{:.0f}"}),
+                use_container_width=True, hide_index=True,
+            )
+            st.download_button(
+                f"⬇️ Pobierz pulę reaktywacji — {sel_city} (CSV)",
+                pool_show.to_csv(index=False).encode("utf-8-sig"),
+                f"reaktywacja_{sel_city}_jesien2026.csv", "text/csv", key="dl_reak",
+            )
+
+    with lt3:
+        st.markdown("**Konta zarejestrowane bez stoiska** (ostatnie 18 mies., miasta docelowe). "
+                    "Pełny pipeline z suwakiem świeżości i filtrem miasta — zakładka **💼 Leady / Pipeline**.")
+        branze_map_s = dict(zip(branze["id"].astype(str), branze["nazwa"]))
+        leads_list = leady_target.copy()
+        leads_list["Branża"] = leads_list["branza"].astype(str).map(branze_map_s).fillna("—")
+        leads_list["Zarejestrowano"] = leads_list["time_utw_dt"].dt.strftime("%Y-%m-%d")
+        leads_list = leads_list.sort_values("time_utw_dt", ascending=False)
+        leads_list = leads_list[["nazwa", "email", "telefon", "Branża", "miasto", "Zarejestrowano"]]
+        leads_list.columns = ["Nazwa", "E-mail", "Telefon", "Branża", "Miasto (konto)", "Zarejestrowano"]
+        st.dataframe(leads_list, use_container_width=True, hide_index=True, height=300)
+        st.download_button(
+            "⬇️ Pobierz leady — konta bez stoiska (CSV)",
+            leads_list.to_csv(index=False).encode("utf-8-sig"),
+            "leady_konta_bez_stoiska_jesien2026.csv", "text/csv", key="dl_leads",
+        )
+
+    st.divider()
+
+    # ── 4. Plan w czasie ──
+    st.subheader("🗓️ Plan w czasie (zsynchronizowany z krzywą sprzedaży)")
+    plan_czas = pd.DataFrame([
+        ["Czerwiec–lipiec (teraz)", "przed falą (~14–21%)", "Reaktywujmy VIP-ów + „z ost. edycji”. Uruchommy early-bird (deadline 31.08). Wyczyśćmy bazę leadów."],
+        ["Sierpień", "start fali (~37%)", "Odpalmy pełną kampanię leadową. Zróbmy drugą turę reaktywacji. Domknijmy early-bird."],
+        ["Wrzesień", "PIK (~65%)", "Wrzućmy maks. intensywność. Dzwońmy do niezdecydowanych. Gliwice (4.10) wchodzi w finał."],
+        ["Październik", "finał (~87%)", "Grajmy „last call”, ostatnie miejsca. Gdańsk/Kraków/Rzeszów/Białystok/Poznań finiszują."],
+        ["Listopad", "miesiąc eventu (~13%)", "Dobijajmy zamówienia last-minute, pełna sala."],
+    ], columns=["Okres", "Faza krzywej", "Działania"])
+    st.dataframe(plan_czas, use_container_width=True, hide_index=True)
+    st.caption("Reguła: jeśli na 3 mies. przed eventem mamy < 37% celu — jesteśmy pod krzywą, eskalujmy (patrz Cockpit).")
+
+    st.divider()
+
+    # ── 5. Polityka cenowa (na żywo) ──
+    st.subheader("💰 Polityka cenowa")
+    st.markdown(
+        "Dane jednoznacznie: **wzrost ceny m² → spadek wolumenu i przychodu.** Dla celów wolumenowych:\n"
+        "- **Zamroźmy cenę bazową m²** (poziom 2025) w miastach z luką (Rzeszów, Kraków, Gliwice).\n"
+        "- Grajmy **early-bird** (niższa cena do terminu X), nie wyższym cennikiem — pilność bez sygnału drożyzny.\n"
+        "- **Dajmy cenę lojalnościową** dla 3+ edycji = argument reaktywacji. **Oferujmy pakiety** zamiast rabatu wprost.\n"
+    )
+    g = zam_s[zam_s["rok_s"].between(2022, 2026)].groupby(["miasto", "rok_s"]).agg(
+        k=("kwota_netto_n", "sum"), mkw=("ilem2_n", "sum")).reset_index()
+    g["cena_m2"] = (g["k"] / g["mkw"]).replace([np.inf, -np.inf], 0).fillna(0).round(0)
+    pokaz_miasta = list(CELE.keys()) + ["Warszawa"]
+    price_piv = g[g["miasto"].isin(pokaz_miasta)].pivot(index="miasto", columns="rok_s", values="cena_m2")
+    st.markdown("**Średnia cena za m² (zł) per miasto i rok** — widać tempo podwyżek:")
+    st.dataframe(price_piv.style.format("{:.0f}", na_rep="—").background_gradient(cmap="Reds", axis=None),
+                 use_container_width=True)
+    st.caption("Uwaga: Warszawa — najwyższa cena m² i równoległy spadek wolumenu (prawdopodobnie przepalona cenowo).")
+
+    st.divider()
+
+    # ── 6. Ryzyka ──
+    st.subheader("⚠️ Ryzyka i rekomendacje")
+    st.warning(
+        "1. **Cele Rzeszowa (×3,0) i Krakowa (×2,4 ost. edycji) mogą być nierealne** — rozważmy osobny cel *committed* "
+        "(np. Rzeszów 20, Kraków 32) do liczenia budżetu kampanii.\n\n"
+        "2. **Definicja leada poprawiona** — starą tabelę `leads` (2017–2022) usunęliśmy jako martwą; lead = konto bez stoiska (na żywo). "
+        "Liczmy tylko świeże (≤18 mies.) i monitorujmy je w zakładce Leady.\n\n"
+        "3. **Słabe tagowanie branż** (większość zamówień „Brak”) — blokuje targetowany przekaz. Wymuśmy tag przy rejestracji.\n\n"
+        "4. **Warszawa w trendzie spadkowym** mimo najwyższej ceny — zróbmy osobną diagnozę."
+    )
+
+    # ── 7. Quick wins ──
+    st.subheader("✅ Quick wins — najbliższe 2 tygodnie")
+    st.markdown(
+        f"1. **Pobierzmy 3 listy** (przyciski wyżej): {len(vip_pool)} VIP-ów, {reak_total} pula reaktywacji, {n_leady} leadów.\n"
+        f"2. **Zadzwońmy do {len(vip_pool)} VIP-ów** — imiennie, gwarancja ceny i miejsca. Najwyższy ROI.\n"
+        "3. **Wyślijmy mailing reaktywacyjny** do „z ostatniej edycji” (Gdańsk, Poznań najpierw) z deadline early-bird 31.08.\n"
+        "4. **Ustawmy early-bird** (zamrożona cena 2025 do 31.08) w miastach z luką.\n"
+        "5. **Wdróżmy regułę 72h** — każdy nowy lead (konto bez stoiska) dotykamy w 3 dni; ciepłe okno to pierwsze 3 mies.\n"
+        "6. **Przeglądajmy Cockpit co tydzień** (poniedziałek) — stały rytuał."
+    )
+
+    # ── Pełny dokument ──
+    with st.expander("📄 Pełny dokument strategii (STRATEGIA_SPRZEDAZY_2026.md)"):
+        doc_path = Path(__file__).parent / "STRATEGIA_SPRZEDAZY_2026.md"
+        try:
+            st.markdown(doc_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            st.warning(f"Nie udało się wczytać dokumentu: {e}")
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# LEADY / PIPELINE — konta bez stoiska (realna definicja leada)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+with tab_leady:
+    st.header("💼 Leady / Pipeline")
+    st.caption(
+        "**Lead = zarejestrowane konto w systemie BEZ stoiska** (konto klienta bez aktywnego zamówienia). "
+        "Dane na żywo — baza rośnie codziennie. Atrybucja miasta wg flag rejestracji `t_<miasto>`. "
+        "_(Stara tabela `leads` 2017–2022 została usunięta jako martwa, myląca dana.)_"
+    )
+
+    n_kont = int(klienci["time_utw_dt"].notna().sum())
+    n_wyst = int((klienci["ma_stoisko"] & klienci["time_utw_dt"].notna()).sum())
+    leady_all = klienci[(~klienci["ma_stoisko"]) & klienci["time_utw_dt"].notna()].copy()
+    n_lead = len(leady_all)
+
+    # ── Suwak świeżości ──
+    okno_opcje = {
+        "Ostatnie 3 mies.": 3, "Ostatnie 6 mies.": 6, "Ostatnie 12 mies.": 12,
+        "Ostatnie 18 mies.": 18, "Ostatnie 24 mies.": 24, "Wszystkie": None,
+    }
+    okno_label = st.select_slider(
+        "Okno rejestracji (świeżość leada)", options=list(okno_opcje.keys()),
+        value="Ostatnie 18 mies.",
+        help="Konta bez stoiska sprzed lat to zwykle martwy potencjał. Domyślnie pokazujemy świeże (ostatnie 18 mies.).",
+    )
+    okno = okno_opcje[okno_label]
+    leady_f = leady_all if okno is None else leady_all[leady_all["mies_od_rej"] <= okno]
+
+    # ── KPI ──
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Konta łącznie", f"{n_kont:,}".replace(",", " "))
+    k2.metric("Wystawcy (ze stoiskiem)", f"{n_wyst:,}".replace(",", " "))
+    k3.metric("Leady (bez stoiska)", f"{n_lead:,}".replace(",", " "))
+    k4.metric("Leady w oknie", f"{len(leady_f):,}".replace(",", " "))
+
+    konw = n_wyst / n_kont * 100 if n_kont else 0
+    st.info(
+        f"Konwersja **konto → stoisko: {konw:.1f}%** ({n_wyst} z {n_kont}). "
+        f"Pozostałe **{n_lead}** kont to leady. W wybranym oknie (**{okno_label.lower()}**) "
+        f"do konwersji jest **{len(leady_f)}** świeżych leadów."
+    )
+
+    # ── 🔥 Ciepłe okno — priorytet sprzedażowy (niezależne od suwaka) ──
+    leady_warm = leady_all[leady_all["mies_od_rej"] <= 3]
+    n_warm = len(leady_warm)
+    _cele_cols = [CITY_COL_MAP[c] for c in CELE_JESIEN_2026 if c in CITY_COL_MAP]
+    _warm_mask = pd.Series(False, index=leady_warm.index)
+    for _c in _cele_cols:
+        if _c in leady_warm.columns:
+            _warm_mask = _warm_mask | (pd.to_numeric(leady_warm[_c], errors="coerce").fillna(0) > 0)
+    n_warm_target = int(_warm_mask.sum())
+    st.success(
+        f"🔥 **Ciepłe okno — priorytet:** **{n_warm}** leadów zarejestrowanych w ostatnich **3 miesiącach** "
+        f"({n_warm_target} w miastach docelowych). To moment najwyższej konwersji — **55% kupuje w 1. miesiącu**. "
+        f"**Reguła 72h:** każdy nowy lead dotykamy w ciągu 3 dni i dociskamy w pierwsze 3 mies. — potem stygnie."
+    )
+
+    st.divider()
+
+    # ── Lejek i trend ──
+    col_f, col_t = st.columns(2)
+    with col_f:
+        funnel = pd.DataFrame({
+            "Etap": ["Konta (rejestracje)", "Leady (bez stoiska)", "Wystawcy (stoisko)"],
+            "Liczba": [n_kont, n_lead, n_wyst],
+        })
+        fig = px.funnel(funnel, x="Liczba", y="Etap", title="Lejek: rejestracja → stoisko",
+                        color_discrete_sequence=[COLORS[2]])
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_t:
+        trend = leady_all.copy()
+        trend["mies"] = trend["time_utw_dt"].dt.to_period("M").astype(str)
+        trend_m = trend[trend["rok_rej"] >= 2022].groupby("mies").size().reset_index(name="leady")
+        trend_m = trend_m.sort_values("mies").tail(30)
+        fig = px.bar(trend_m, x="mies", y="leady", title="Nowe leady miesięcznie (od 2022)",
+                     color_discrete_sequence=[COLORS[0]])
+        fig.update_layout(xaxis_title="", yaxis_title="Nowe leady")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── Konwersja konto → stoisko (kohortowo + czas) ──
+    st.subheader("📈 Konwersja konto → stoisko")
+
+    # Pierwszy zakup per klient
+    zam_buy = zamowienia[zamowienia["status"].astype(str) == "2"].copy()
+    zam_buy["id_s"] = zam_buy["idklienta"].astype(str)
+    first_buy = zam_buy.groupby("id_s")["data_utw_dt"].min()
+    klc = klienci[klienci["rok_rej"] >= 2016].copy()
+    klc["id_s"] = klc["id"].astype(str)
+    klc["pierwszy_zakup"] = klc["id_s"].map(first_buy)
+    klc["mies_do_zakupu"] = (klc["pierwszy_zakup"] - klc["time_utw_dt"]).dt.days / 30.44
+    klc["kup_12m"] = klc["ma_stoisko"] & (klc["mies_do_zakupu"] <= 12) & (klc["mies_do_zakupu"] >= -1)
+
+    konw_ogol = klc["ma_stoisko"].mean() * 100 if len(klc) else 0
+    dojrz = klc[klc["rok_rej"].between(2022, 2024)]
+    konw_12_dojrz = dojrz["kup_12m"].sum() / len(dojrz) * 100 if len(dojrz) else 0
+    kupujacy = klc[klc["ma_stoisko"] & klc["mies_do_zakupu"].notna()]
+    mediana_mies = kupujacy["mies_do_zakupu"].median() if len(kupujacy) else 0
+    pct_1mc = (kupujacy["mies_do_zakupu"] <= 1).mean() * 100 if len(kupujacy) else 0
+
+    kc1, kc2, kc3, kc4 = st.columns(4)
+    kc1.metric("Konwersja ogółem", f"{konw_ogol:.1f}%", help="Wszystkie konta 2016+ — zaniżone przez świeże, niedojrzałe rejestracje")
+    kc2.metric("Konwersja w 12 mies.", f"{konw_12_dojrz:.1f}%", help="Dojrzałe kohorty 2022–2024 — standaryzowana miara apples-to-apples")
+    kc3.metric("Mediana czasu do zakupu", f"{mediana_mies:.1f} mies")
+    kc4.metric("Zakupy w 1. miesiącu", f"{pct_1mc:.0f}%", help="Tyle % kupujących bierze stoisko w ciągu miesiąca od rejestracji")
+
+    st.caption(
+        "⚠️ **Jak czytać:** surowa konwersja ogółem jest zaniżona, bo świeże konta nie zdążyły jeszcze kupić. "
+        "Uczciwa miara to **konwersja w 12 mies. per kohorta**. Uwaga: konwersja jest **dwumodalna** — większość kupuje "
+        "od razu (≤1 mies.), reszta zostaje leadem; ciepłe okno to pierwsze ~3 miesiące od rejestracji."
+    )
+
+    # Kohortowa konwersja wg roku rejestracji
+    coh = klc.groupby("rok_rej").agg(
+        konta=("id_s", "count"), kupili=("ma_stoisko", "sum"), kup12=("kup_12m", "sum"),
+    ).reset_index()
+    coh["konw_ever"] = (coh["kupili"] / coh["konta"] * 100).round(1)
+    coh["konw_12m"] = (coh["kup12"] / coh["konta"] * 100).round(1)
+
+    fig = go.Figure()
+    fig.add_bar(x=coh["rok_rej"], y=coh["konta"], name="Konta (rejestracje)", marker_color=COLORS[7])
+    fig.add_bar(x=coh["rok_rej"], y=coh["kupili"], name="Kupili stoisko", marker_color=COLORS[2])
+    fig.add_trace(go.Scatter(x=coh["rok_rej"], y=coh["konw_ever"], name="Konwersja % (kiedykolwiek)",
+                             yaxis="y2", mode="lines+markers+text", text=coh["konw_ever"],
+                             texttemplate="%{text:.0f}%", textposition="top center",
+                             line=dict(color=COLORS[1], width=3)))
+    fig.add_trace(go.Scatter(x=coh["rok_rej"], y=coh["konw_12m"], name="Konwersja % (w 12 mies.)",
+                             yaxis="y2", mode="lines+markers", line=dict(color=COLORS[3], width=2, dash="dash")))
+    fig.update_layout(
+        title="Konwersja kohortowa — wg roku rejestracji konta",
+        barmode="group", xaxis=dict(title="Rok rejestracji", dtick=1),
+        yaxis=dict(title="Liczba kont"),
+        yaxis2=dict(title="Konwersja %", overlaying="y", side="right", range=[0, max(35, coh["konw_ever"].max() * 1.2)]),
+        legend=dict(orientation="h", y=-0.2),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    col_cz, col_cm = st.columns(2)
+    with col_cz:
+        m = kupujacy["mies_do_zakupu"]
+        bucket_def = [(-1, 1, "0–1 mies"), (1, 3, "1–3 mies"), (3, 6, "3–6 mies"),
+                      (6, 12, "6–12 mies"), (12, 24, "12–24 mies"), (24, 9999, "24+ mies")]
+        bdf = pd.DataFrame([{"Okno": lab, "Zakupów": int(((m > lo) & (m <= hi)).sum())}
+                            for lo, hi, lab in bucket_def])
+        fig = px.bar(bdf, x="Okno", y="Zakupów", title="Czas od rejestracji do zakupu stoiska",
+                     color_discrete_sequence=[COLORS[4]], text="Zakupów")
+        fig.update_layout(xaxis_title="", yaxis_title="Liczba kupujących")
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_cm:
+        city_rows = []
+        for miasto in CELE_JESIEN_2026:
+            col = CITY_COL_MAP.get(miasto)
+            if not col or col not in klc.columns:
+                continue
+            sel = pd.to_numeric(klc[col], errors="coerce").fillna(0) > 0
+            sub = klc[sel]
+            if len(sub):
+                city_rows.append({"Miasto": miasto, "Konwersja %": round(sub["ma_stoisko"].mean() * 100, 1)})
+        citydf = pd.DataFrame(city_rows).sort_values("Konwersja %", ascending=True)
+        fig = px.bar(citydf, x="Konwersja %", y="Miasto", orientation="h",
+                     title="Konwersja konto → stoisko per miasto (kiedykolwiek)",
+                     color_discrete_sequence=[COLORS[0]], text="Konwersja %")
+        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig.update_layout(xaxis_title="Konwersja %", yaxis_title="")
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── Pipeline per miasto ──
+    st.subheader("Pipeline per miasto — leady do konwersji (w oknie)")
+    st.caption("Leady z flagą rejestracji danego miasta. Lead może być zainteresowany kilkoma miastami (sumy się nakładają).")
+    pipe_rows = []
+    for miasto, col in CITY_COL_MAP.items():
+        if col not in leady_f.columns:
+            continue
+        n_okno = int((pd.to_numeric(leady_f[col], errors="coerce").fillna(0) > 0).sum())
+        n_all = int((pd.to_numeric(leady_all[col], errors="coerce").fillna(0) > 0).sum())
+        if n_all == 0 and miasto not in CELE_JESIEN_2026:
+            continue
+        pipe_rows.append({
+            "Miasto": miasto,
+            "Leady (okno)": n_okno,
+            "Leady (wszyscy)": n_all,
+            "Cel jesień 2026": CELE_JESIEN_2026.get(miasto, 0),
+            "_cel": miasto in CELE_JESIEN_2026,
+        })
+    pipe = pd.DataFrame(pipe_rows).sort_values("Leady (okno)", ascending=False)
+
+    col_p1, col_p2 = st.columns([3, 2])
+    with col_p1:
+        pipe_plot = pipe[pipe["Leady (okno)"] > 0]
+        fig = px.bar(pipe_plot, x="Miasto", y="Leady (okno)",
+                     title="Leady w oknie per miasto", color="_cel",
+                     color_discrete_map={True: COLORS[1], False: COLORS[7]},
+                     text="Leady (okno)")
+        fig.update_layout(showlegend=False, xaxis_title="", yaxis_title="Leady")
+        st.plotly_chart(fig, use_container_width=True)
+    with col_p2:
+        pipe_show = pipe[pipe["_cel"]].drop(columns=["_cel"])
+        st.markdown("**Miasta docelowe jesień 2026:**")
+        st.dataframe(pipe_show, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Lista kontaktów do eksportu ──
+    st.subheader("📨 Lista leadów do kontaktu (eksport)")
+    branze_map_l = dict(zip(branze["id"].astype(str), branze["nazwa"]))
+    miasta_opcje = ["(wszystkie miasta)"] + list(CITY_COL_MAP.keys())
+    cs1, cs2 = st.columns([3, 2])
+    sel_m = cs1.selectbox("Miasto (flaga rejestracji)", miasta_opcje, key="lead_city")
+    tylko_warm = cs2.checkbox("🔥 Tylko ciepłe okno (≤3 mies.)", value=False, key="lead_warm_only")
+
+    lst = leady_f.copy()
+    if sel_m != "(wszystkie miasta)":
+        col = CITY_COL_MAP.get(sel_m)
+        if col in lst.columns:
+            lst = lst[pd.to_numeric(lst[col], errors="coerce").fillna(0) > 0]
+    if tylko_warm:
+        lst = lst[lst["mies_od_rej"] <= 3]
+
+    lst["Priorytet"] = np.where(lst["mies_od_rej"] <= 3, "🔥 72h", "")
+    lst["Branża"] = lst["branza"].astype(str).map(branze_map_l).fillna("—")
+    lst["Zarejestrowano"] = lst["time_utw_dt"].dt.strftime("%Y-%m-%d")
+    lst["Mies. temu"] = lst["mies_od_rej"].round(0).astype("Int64")
+    lst = lst.sort_values("time_utw_dt", ascending=False)
+    lst_show = lst[["Priorytet", "nazwa", "email", "telefon", "Branża", "miasto", "Zarejestrowano", "Mies. temu"]].copy()
+    lst_show.columns = ["Priorytet", "Nazwa", "E-mail", "Telefon", "Branża", "Miasto (konto)", "Zarejestrowano", "Mies. temu"]
+
+    n_warm_sel = int((lst["mies_od_rej"] <= 3).sum())
+    st.caption(f"**{len(lst_show)}** leadów w wyborze (okno: {okno_label.lower()}, miasto: {sel_m}) — "
+               f"w tym **{n_warm_sel}** w ciepłym oknie 🔥.")
+    st.dataframe(lst_show, use_container_width=True, hide_index=True, height=360)
+    fname_m = sel_m.replace("(wszystkie miasta)", "wszystkie").replace(" ", "")
+    st.download_button(
+        "⬇️ Pobierz listę leadów (CSV)",
+        lst_show.to_csv(index=False).encode("utf-8-sig"),
+        f"leady_{fname_m}_{okno_label.replace(' ', '').replace('.', '')}.csv",
+        "text/csv", key="dl_leady_pipe",
+    )
 
 
 # ── Footer ───────────────────────────────────────────────────
